@@ -24,16 +24,8 @@ Base.@kwdef @concrete struct KernelCov <: AbstractCovEstimator
   γ = 0.05
 end
 
-function estimate_cov(c::KernelCov,samples,weights,xs)
-  n_samples, ref_samples,wfun = if size(samples,2) > c.max_samples
-    inds = c.resampler(weights,c.max_samples)
-    c.max_samples, samples[:,inds], i -> 1
-  else
-    n_samples = size(samples,2)
-    n_samples,samples, i -> sqrt(n_samples * weights[i])
-  end
-
-  n_dims = size(samples,1)
+function _kernel_estimate(c::KernelCov,ref_samples,wfun,xs)
+  n_dims,n_samples = size(ref_samples)
   H = I - ones(n_samples,n_samples)/n_samples
   M = similar(H,n_dims,n_samples)
 
@@ -47,6 +39,16 @@ function estimate_cov(c::KernelCov,samples,weights,xs)
       @. M[:,j] = wfun(j) * 2/lengthscale^2 * exp(-0.5*xzdists[i,j]/lengthscale^2) * (z - xs[i])
     end
     Symmetric(c.γ*I + M * H * M')
+  end
+end
+
+function estimate_cov(c::KernelCov,samples,weights,xs)
+  n_samples = size(samples,2)
+  if n_samples > c.max_samples
+    inds = c.resampler(weights,c.max_samples)
+    _kernel_estimate(c,samples[:,inds],i -> 1,xs)
+  else
+    _kernel_estimate(c,samples, i->sqrt(n_samples*weights[i]),xs)
   end
 end
 

@@ -35,13 +35,19 @@ end
 LD.capabilities(ℓ::TemperedLogDensity) = _lowest_capability(ℓ.ref,ℓ.mul)
 
 function LD.logdensity(ℓ::TemperedLogDensity,θ)
-  mul = LD.logdensity(ℓ.mul,θ) 
   ref = LD.logdensity(ℓ.ref,θ) 
+  if isinf(ref)
+    return   MetaNumber(ref,(;mul=ref,ref))
+  end
+  mul = LD.logdensity(ℓ.mul,θ) 
   MetaNumber(ℓ.β * mul + ref,(;mul,ref))
 end
 
 function LD.logdensity_and_gradient(ℓ::TemperedLogDensity,θ)
   ref,refgrad = LD.logdensity_and_gradient(ℓ.ref,θ)
+  if isinf(ref)
+    return   MetaNumber(ref,(;mul=ref,mulgrad=refgrad,ref,refgrad)), refgrad
+  end
   mul,mulgrad = LD.logdensity_and_gradient(ℓ.mul,θ)
   MetaNumber(ℓ.β * mul + ref,(;mul,mulgrad,ref,refgrad)), ℓ.β * mulgrad + refgrad
 end

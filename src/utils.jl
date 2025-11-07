@@ -91,9 +91,9 @@ norm2(v::AbstractVector) = dot(v,v)
 function _default_sampler(ref_logdensity,mul_logdensity)
   lc = _lowest_capability(ref_logdensity,mul_logdensity)
   if lc isa LD.LogDensityOrder{0}()
-    return PathDelayedRejection()
+    return AutoStepRWMH()
   end
-  return FisherMALA()
+  return AutoStepMALA()
 end
 
 """
@@ -103,8 +103,7 @@ end
   a type assertion to enforce it.
 """
 function stabilized_map(f,x,map_func)
-  gen = Base.Generator(f,x)
-  T = Base.@default_eltype gen
+  T = only(Base.return_types(f,(typeof(first(x)),)))
   return map_func(f,x)::Vector{T}
 end
 

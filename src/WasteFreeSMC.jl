@@ -13,6 +13,7 @@ using Distances
 using Primes
 using ProgressMeter
 using ConcreteStructs
+using StatsFuns
 
 import LogDensityProblems as LD
 

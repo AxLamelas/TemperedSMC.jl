@@ -9,7 +9,7 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
                         # reference distribution
                         initial_weights = fill(1/size(initial_samples,2),size(initial_samples,2)),
                         # Reference scale
-                        ref_cov_scale = 2.38^2/size(initial_samples,1),
+                        ref_cov_scale = 10*2.38^2/size(initial_samples,1),
                         # Search scales up to `ϵ` orders of magnitude lower than 
                         # the ref scale
                         ϵ = 6,
@@ -18,18 +18,18 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
                         map_func = map,
                         maxiter = 200,
                         callback=(_) -> false,
-                        store_trace = true
+                        store_trace = true,
+                        show_progress = true
                         )
 
 
   samples = copy(initial_samples)
   n_dims, n_samples = size(samples)
 
-  loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9)
+  loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 
-  ℓ = stabilized_map(eachcol(samples),map_func) do c
-    LD.logdensity(mul_logdensity,c)
-  end
+  ℓ = stabilized_map(
+    Base.Fix1(LD.logdensity,mul_logdensity),eachcol(samples),map_func) 
   ℓ_adjust  = maximum(ℓ)
   ℓ .-= ℓ_adjust
 
@@ -106,12 +106,19 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
       w = 0.
       for i in 1:mcmc_steps
         δ = c.samples[i+1]-c.samples[i]
-        w += c.α[i] * δ'*(Σ\δ)
+        w += c.γ[i] * δ'*(Σ\δ)
       end
       w /= mcmc_steps
       state.scale_weights[j] = w
     end
-    state.scale_weights ./= sum(state.scale_weights)
+    n = sum(state.scale_weights)
+    if n == 0  
+      # All weights are 0 -> reset weights
+      state.scale_weights .= 1 / n_samples
+      state.scales ./= 10
+    else
+      state.scale_weights ./= n
+    end
     scale_inds = resampler(state.scale_weights)
     state.scales = state.scales[scale_inds]
     for i in eachindex(state.scales)
@@ -119,7 +126,7 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
       # Do also a mixture with the initial uniform distribution
       # so that if the scale changes abruptly between steps 
       # the distribution of scale parameters is not stuck on the old scale
-      if rand() < 0.75 + 0.25*state.β # it is also tempered
+      if rand() < 0.9 + 0.1*state.β # it is also tempered
         state.scales[i] = exp(log(state.scales[i]) + perturb_scale*randn())
       else
         state.scales[i] = ref_cov_scale * 10 .^ (-ϵ*rand())

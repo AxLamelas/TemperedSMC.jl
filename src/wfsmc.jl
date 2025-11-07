@@ -8,7 +8,7 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
                         # reference distribution
                         initial_weights = fill(1/size(initial_samples,2),size(initial_samples,2)),
                         # Reference scale
-                        ref_cov_scale = 2.38^2/size(initial_samples,1),
+                        ref_cov_scale = 10*2.38^2/size(initial_samples,1),
                         # Search scales up to `ϵ` orders of magnitude lower than 
                         # the ref scale
                         ϵ = 6,
@@ -18,20 +18,20 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
                         map_func = map,
                         maxiter = 200,
                         callback=(_) -> false,
-                        store_trace = true
+                        store_trace = true,
+                        show_progress = true
                         )
 
 
   samples = copy(initial_samples)
   n_dims, n_samples = size(samples)
 
-  loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9)
+  loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled=show_progress)
 
   chain_length = div(n_samples, n_starting)
 
-  ℓ = stabilized_map(eachcol(samples),map_func) do c
-    LD.logdensity(mul_logdensity,c)
-  end
+  ℓ = stabilized_map(
+    Base.Fix1(LD.logdensity,mul_logdensity),eachcol(samples),map_func) 
   ℓ_adjust  = maximum(ℓ)
   ℓ .-= ℓ_adjust
 
@@ -64,7 +64,7 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
 
     starting_x = [view(samples,:,i) for i in indices]
     cov_estimate = estimate_cov(cov_estimator, samples,state.W,starting_x)
-    chains = stabilized_map(zip(starting_x,state.scales,cov_estimate),map_func) do (x,scale,Σ)
+    chains = stabilized_map(collect(zip(starting_x,state.scales,cov_estimate)),map_func) do (x,scale,Σ)
       interp_density = TemperedLogDensity(ref_logdensity,mul_logdensity,new_β,n_dims)
       kernel_state = init_kernel_state(mcmc_kernel,x,scale,Σ)
       mcmc_chain(mcmc_kernel,interp_density,x,kernel_state,chain_length)
@@ -104,12 +104,19 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
       w = 0.
       for i in 1:chain_length-1
         δ = c.samples[i+1]-c.samples[i]
-        w += c.α[i] * δ'*(Σ\δ)
+        w += c.γ[i] * δ'*(Σ\δ)
       end
       w /= chain_length - 1
       state.scale_weights[j] = w
     end
-    state.scale_weights ./= sum(state.scale_weights)
+    n = sum(state.scale_weights)
+    if n == 0  
+      # All weights are 0 -> reset weights
+      state.scale_weights .= 1 / n_samples
+      state.scales ./= 10
+    else
+      state.scale_weights ./= n
+    end
     scale_inds = resampler(state.scale_weights)
     state.scales = state.scales[scale_inds]
     for i in eachindex(state.scales)
@@ -117,7 +124,7 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
       # Do also a mixture with the initial uniform distribution
       # so that if the scale changes abruptly between steps 
       # the distribution of scale parameters is not stuck on the old scale
-      if rand() < 0.75 + 0.25*state.β # it is also tempered
+      if rand() < 0.9 + 0.1*state.β # it is also tempered
         state.scales[i] = exp(log(state.scales[i]) + perturb_scale*randn())
       else
         state.scales[i] = ref_cov_scale * 10 .^ (-ϵ*rand())

@@ -1,52 +1,48 @@
 function smc(ref_logdensity,mul_logdensity,initial_samples;
-                        mcmc_kernel::AbstractMCMCKernel = _default_sampler(ref_logdensity,mul_logdensity),
-                        cov_estimator::AbstractCovEstimator = IdentityCov(),
-                        resampler::AbstractResampler = ResidualResampler(),
-                        α = 0.95,
-                        resampling_α = 0.5,
-                        mcmc_steps = 1,
-                        # Normalized weights of the samples according to the
-                        # reference distribution
-                        initial_weights = fill(1/size(initial_samples,2),size(initial_samples,2)),
-                        # Reference scale
-                        ref_cov_scale = 10*2.38^2/size(initial_samples,1),
-                        # Search scales up to `ϵ` orders of magnitude lower than 
-                        # the ref scale
-                        ϵ = 6,
-                        # Magnitude of the perturbation of the scale estimate
-                        perturb_scale = 0.015,
-                        map_func = map,
-                        maxiter = 200,
-                        callback=(_) -> false,
-                        store_trace = true,
-                        show_progress = true
-                        )
+             mcmc_kernel::AbstractMCMCKernel = _default_sampler(ref_logdensity,mul_logdensity),
+             cov_estimator::AbstractCovEstimator = IdentityCov(),
+             resampler::AbstractResampler = SSPResampler(),
+             α = 0.95,
+             resampling_α = 0.5,
+             mcmc_steps = 1,
+             # Reference scale
+             ref_cov_scale = 1.,
+             # Search scales up to `ϵ` orders of magnitude lower than 
+             # the ref scale
+             ϵ = 4,
+             # Magnitude of the perturbation of the scale estimate
+             perturb_scale = 0.015,
+             map_func = map,
+             maxiter = 200,
+             callback=(_) -> false,
+             store_trace = true,
+             show_progress = true
+             )
 
 
   samples = copy(initial_samples)
   n_dims, n_samples = size(samples)
+  lN = -log(n_samples)
 
   loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 
   ℓ = stabilized_map(
     Base.Fix1(LD.logdensity,mul_logdensity),eachcol(samples),map_func) 
-  ℓ_adjust  = maximum(ℓ)
-  ℓ .-= ℓ_adjust
 
   state = SMCState(
-    samples,initial_weights,ℓ,ℓ_adjust,
+    samples,ℓ,
     ref_cov_scale * 10 .^ (range(-ϵ,0,length=n_samples)),
     ones(n_samples)
   )
   trace = typeof(state)[]
 
   indices_no_resampling = collect(1:n_samples)
-  did_resampling = false
+  indices = indices_no_resampling
+  resampled = false
 
   ProgressMeter.update!(loop_prog,0)
   while state.β < 1 && state.iter < maxiter
     # `state` contains information regarding the previous step in the sequence
-
     if store_trace
       push!(trace,deepcopy(state))
     end
@@ -57,24 +53,13 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     end
 
     # Determines the current distribution in the sequence
-    new_β = _next_β(state,α*n_samples)
+    β = _next_β(state,α)
 
-    ess = 1/sum(abs2,state.W)
-    # Resample 
-    indices = if ess < resampling_α*n_samples
-      v = resampler(state.W) 
-      state.W .= 1/n_samples
-      did_resampling = true
-      v
-    else
-      did_resampling = false
-      indices_no_resampling
-    end
-
+    # Propagate
     starting_x = [view(samples,:,i) for i in indices]
     cov_estimate = estimate_cov(cov_estimator, samples,state.W,starting_x)
     chains = stabilized_map(collect(zip(starting_x,state.scales,cov_estimate)),map_func) do (x,scale,Σ)
-      interp_density = TemperedLogDensity(ref_logdensity,mul_logdensity,new_β,n_dims)
+      interp_density = TemperedLogDensity(ref_logdensity,mul_logdensity,β,n_dims)
       kernel_state = init_kernel_state(mcmc_kernel,x,scale,Σ)
       mcmc_chain(mcmc_kernel,interp_density,x,kernel_state,mcmc_steps+1)
     end
@@ -83,17 +68,29 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     for (i,c) in enumerate(chains)
       state.samples[:,i] .= c.samples[end]
       state.ℓ[i] = c.lps[end].info.mul 
+      state.lw[i] += (β-state.β) * state.ℓ[i]
     end
-    state.ℓ_adjust = maximum(ℓ)
-    state.ℓ .-= state.ℓ_adjust
-    
-    state.W .*= exp.((new_β-state.β) .* state.ℓ)
-    state.log_evidence += log(sum(state.W)) + (new_β - state.β) * ℓ_adjust 
-    
-    # Normalize weights
-    state.W ./= sum(state.W)
 
-    state.β = new_β
+    nw = logsumexp(state.lw)
+    for i in eachindex(state.W)
+      state.W[i] = exp(state.lw[i]-nw)
+    end
+
+    ess = 1/sum(abs2,state.W)
+
+    # Resample 
+    indices = if ess < resampling_α*n_samples || isone(β)
+      state.log_evidence += nw + lN
+      v = resampler(state.W) 
+      fill!(state.lw,0)
+      resampled = true
+      v
+    else
+      resampled = false
+      indices_no_resampling
+    end
+
+    state.β = β
 
     # Average acceptance rate of the chains
     state.acceptance_rate = sum(c.n_accepts for c in chains) / (mcmc_steps*n_samples)
@@ -135,25 +132,35 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     state.iter += 1
 
     ProgressMeter.next!(loop_prog,
-                    showvalues=[
-                    ("β",state.β),
-                    ("Resampled?",did_resampling),
-                    ("Maximum ℓ",state.ℓ_adjust),
-                    ("Log evidence",state.log_evidence),
-                    ("Acceptance rate",state.acceptance_rate),
-                    ])
+                        showvalues=[
+                        ("β",state.β),
+                        ("Resampled?",resampled),
+                        ("Maximum ℓ",maximum(state.ℓ)),
+                        ("Log evidence",state.log_evidence),
+                        ("Acceptance rate",state.acceptance_rate),
+                        ("Median scale",median(state.scales)),
+                        ])
 
+  end
+
+
+  ProgressMeter.finish!(loop_prog)
+
+  # Final resample
+  if !isone(state.β)
+    @warn "Did not reach β=1 in the give limit of iterations"
+  else
+    println(indices)
+    tmp = copy(state.samples)
+    for (i,j) in enumerate(indices)
+      state.samples[:,i] .= tmp[:,j]
+    end
   end
 
   if store_trace
     push!(trace,state)
+    return trace
   end
 
-  ProgressMeter.finish!(loop_prog)
-
-  if !isone(state.β)
-    @warn "Did not reach β=1 in the give limit of iterations"
-  end
-
-  return store_trace ? trace : state
+  return state
 end

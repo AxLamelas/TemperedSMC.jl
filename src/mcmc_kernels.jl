@@ -19,154 +19,187 @@ end
 
 usesgrad(_::AbstractMCMCKernel{Val{V}}) where {V} = V
 
- 	
+
 # From https://doi.org/10.48550/arXiv.2410.18929
-struct AutoStepMALA <: AbstractMCMCKernel{Val{true}} end
+abstract type AbstractAutoStep{G} <: AbstractMCMCKernel{G} end
 
-function init_kernel_state(_::AutoStepMALA,x,scale,Σ) 
+
+function init_kernel_state(_::AbstractAutoStep,x,scale,Σ) 
   return (;init_scale=scale,C=cholesky(Symmetric(Σ)))
 end
 
-function _mala_state_log_α(target,x,logp_x,gradlogp_x,z,θ,L)
-  y = x + 0.5*θ^2*L*(L'*gradlogp_x) + θ*L*z
+max_iters(::AbstractAutoStep) = 10
+factor_base(::AbstractAutoStep) = 4.
+
+# function auto_step_size(type, a, b, θ0, args...)
+#   base = factor_base(type)
+#
+#   θl = zero(θ0)
+#   θ = θ0
+#
+#   info...,logα = involution(type,θ,args...)
+#   extra_evals = 0
+#   α = min(1.,exp(logα))
+#
+#   if a < α < b
+#     return Normal(θ,0.1*θ), extra_evals
+#   end
+#
+#   # Search for a upper bound
+#   while α > a
+#     θ *= base
+#     info...,logα = involution(type,θ,args...)
+#     extra_evals += 1
+#     α = min(1.,exp(logα))
+#     # @info "Bound search" α θ
+#   end
+#
+#   θu = θ
+#
+#   for _ in 1:max_iters(type)
+#     θ = (θl + θu)/2
+#     info...,logα = involution(type,θ,args...)
+#     extra_evals += 1
+#     α = min(1.,exp(logα))
+#     # @info "Bisection" α a b θ θl θu
+#     if a < α < b
+#       return Normal(θ,0.1*θ), extra_evals
+#     end
+#
+#     if α > b
+#       θl = θ 
+#     end
+#
+#     if α < a
+#       θu = θ
+#     end
+#   end
+#
+#   return Normal(θ,0.05*θ), extra_evals
+# end
+
+function auto_step_size(type, a, b, θ0, args...)
+  loga = abs(log(a))
+  logb = abs(log(b))
+  b = factor_base(type)
+  θ = θ0
+
+  info...,logα = involution(type,θ,args...)
+  extra_evals = 0
+
+  inrange = Int(abs(logα) < logb) - Int(abs(logα) > loga)
+  δ = b^inrange
+  j = 0
+
+  if iszero(inrange)
+    return j, extra_evals
+  end
+  for _ in 1:max_iters(type)
+    θ *= δ
+    j += inrange
+    info...,logα = involution(type,θ,args...)
+    extra_evals += 1
+
+    if inrange == 1 && abs(logα) >= logb
+      θ /= δ
+      break
+    end
+    if inrange == -1 && abs(logα) <= loga
+      break
+    end
+  end
+
+  return j, extra_evals
+end
+
+function (ker::AbstractAutoStep{Val{true}})(target,x,logp_x,gradlogp_x,state)
+  z = randn(length(x))
+  a0,b0 = rand(),rand()
+  a = min(a0,b0)
+  b = max(a0,b0)
+
+  jitter_dist = Normal(0.,0.5)
+ 
+  forward_exp,fevals = auto_step_size(ker,a,b,state.init_scale,
+                               target,x,logp_x,gradlogp_x,z,state.C.L)
+
+  forward_jitter = rand(jitter_dist)
+  θ = state.init_scale * factor_base(ker)^(forward_exp+forward_jitter)
+
+  y,logp_y,gradlogp_y,w,logα = involution(ker,θ,target,x,logp_x,gradlogp_x,z,state.C.L)
+
+  reverse_exp, revals = auto_step_size(ker,a,b,state.init_scale,
+                               target,y,logp_y,gradlogp_y,w,state.C.L)
+
+  reverse_jitter = forward_exp + forward_jitter - reverse_exp
+  α = min(1,exp(logα + logpdf(jitter_dist,reverse_jitter) -
+                 logpdf(jitter_dist,forward_jitter)))
+
+  N = fevals + revals - 1
+  # @info "" α θ logpdf(jitter_dist,reverse_jitter) logpdf(jitter_dist,forward_jitter) logp_y logp_x
+
+  if rand() < α
+    return y, logp_y, gradlogp_y,true, α*(1-N/(2max_iters(ker))), state
+  end
+
+  return x, logp_x, gradlogp_y, false, α*(1-N/(2max_iters(ker))), state
+end
+
+function (ker::AbstractAutoStep{Val{false}})(target,x,logp_x,state)
+  z = randn(length(x))
+  a0,b0 = rand(),rand()
+  a = min(a0,b0)
+  b = max(a0,b0)
+
+  jitter_dist = Normal(0.,0.5)
+  
+  forward_exp,fevals = auto_step_size(ker,a,b,state.init_scale,
+                               target,x,logp_x,z,state.C.L)
+
+  forward_jitter = rand(jitter_dist)
+  θ = state.init_scale * factor_base(ker)^(forward_exp+forward_jitter)
+  
+  y,logp_y,w,logα = involution(ker,θ,target,x,logp_x,z,state.C.L)
+
+  reverse_exp,revals = auto_step_size(ker,a,b,state.init_scale,
+                               target,y,logp_y,w,state.C.L)
+
+  reverse_jitter = forward_exp + forward_jitter - reverse_exp
+  α = min(1,exp(logα + logpdf(jitter_dist,reverse_jitter) -
+                 logpdf(jitter_dist,forward_jitter)))
+
+  N = fevals+revals
+  # @info "" α θ logpdf(jitter_dist,reverse_jitter) logpdf(jitter_dist,forward_jitter) logp_y logp_x
+
+  if rand() < α
+    return y, logp_y, true, α*(1-N/(2max_iters(ker))), state
+  end
+
+  return x, logp_x, false, α*(1-N/(2max_iters(ker))), state
+end
+
+struct AutoStepMALA <: AbstractAutoStep{Val{true}} end
+
+function involution(::AutoStepMALA,θ,target,x,logp_x,gradlogp_x,z,L)
+  # Leapfrog integrator
+  zhalf  = z + θ/2*(L \ gradlogp_x)
+  y = L \ zhalf
+  y .= x .+ θ .* y
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  hxy = 0.5*(x-y-0.25*θ^2*L*(L'*gradlogp_y))'*gradlogp_y
-  hyx = 0.5*(y-x-0.25*θ^2*L*(L'*gradlogp_x))'*gradlogp_x
-  logα = logp_y - logp_x + hxy - hyx
-  y, logp_y, gradlogp_y, logα
+  w = -(zhalf + θ/2 * (L \ gradlogp_y))
+
+  logα = logp_y + sum(Base.Fix1(logpdf,Normal()),w) - logp_x - sum(Base.Fix1(logpdf,Normal()),z)
+
+  return y,logp_y,gradlogp_y, w, logα 
 end
 
-function auto_mala_step_size(target,x,logp_x,gradlogp_x,z,loga,logb,θ0,L,init_j=0)
-  j = init_j
-  θ = θ0*2. ^j
+struct AutoStepRWMH <: AbstractAutoStep{Val{false}} end
 
-  _...,logα = _mala_state_log_α(target,x,logp_x,gradlogp_x,z,θ,L)
-
-  inrange = Int(abs(logα) < logb) - Int(abs(logα) > loga)
-
-  if inrange !=0 
-    while true
-      j += inrange
-      θ = θ0*2. ^j
-      _...,logα = _mala_state_log_α(target,x,logp_x,gradlogp_x,z,θ,L)
-
-      if inrange == 1 && abs(logα) >= logb
-        return j-1
-      end
-      if inrange == -1 && abs(logα) <= loga
-        return j
-      end
-    end
-  end
-
-  return init_j
-end
-
-function (k::AutoStepMALA)(target,x,logp_x,gradlogp_x,state)
-  z = randn(length(x))
-  loga,logb = abs.(log.(sort(rand(2))))
-  
-  forward_exp = auto_mala_step_size(target,x,logp_x,gradlogp_x,z,loga,logb,
-                                    state.init_scale,state.C.L)
-
-  
-  θ = state.init_scale*2. ^forward_exp
-  y,logp_y,gradlogp_y,logα = _mala_state_log_α(target,x,logp_x,gradlogp_x,z,θ,state.C.L)
-
-  # Use the forward_exp as the starting point
-  reverse_exp = auto_mala_step_size(target,y,logp_y,gradlogp_y,-z,loga,logb,
-                                    state.init_scale,state.C.L,forward_exp)
-
-
-  # The step size selector is a dirac measure so the exponents have to be the
-  # same for both directions
-  α = (forward_exp == reverse_exp) * min(1,exp(logα))
-
-  N = abs(forward_exp) + abs(reverse_exp)
-
-  if rand() < α
-    return y, logp_y, gradlogp_y,true, 1/(N+1), state
-  end
-
-  return x, logp_x, gradlogp_y, false, 1/(N+1), state
-end
-
-
-Base.@kwdef @concrete struct AutoStepRWMH <: AbstractMCMCKernel{Val{false}}
-  acceptance_range = (0.,1.)
-  proposal_dist = Normal()
-end
-
-
-function init_kernel_state(_::AutoStepRWMH,x,scale,Σ) 
-  return (;init_scale=scale,C=cholesky(Symmetric(Σ)))
-end
-
-function auto_rwmh_step_size(target,x,logp_x,z,Δaux,loga,logb,θ0,L,init_j=0)
-  j = init_j
-  θ = θ0*2. ^j
-  y = x + θ * L * z
+function involution(::AutoStepRWMH,θ,target,x,logp_x,z,L)
+  y = x + θ*L*z
   logp_y = LD.logdensity(target,y)
-  logα = logp_y - logp_x + Δaux
-
-  inrange = Int(abs(logα) < logb) - Int(abs(logα) > loga)
-
-  if inrange !=0 
-    while true
-      j += inrange
-      θ = θ0*2. ^j
-      y = x + θ * L * z
-      logp_y = LD.logdensity(target,y)
-      logα = logp_y - logp_x + Δaux
-
-      if inrange == 1 && abs(logα) >= logb
-        return j-1
-      end
-      if inrange == -1 && abs(logα) <= loga
-        return j
-      end
-    end
-  end
-
-  return init_j
-end
-
-function (k::AutoStepRWMH)(target,x,logp_x,state)
-  @unpack proposal_dist, acceptance_range = k
-  αlb,αub = acceptance_range
-  z = randn(length(x))
-  loga,logb = abs.(log.(sort((αub-αlb) * rand(2) .+ αlb)))
-  # Step size selector
-  
-  Δaux = sum(logpdf(proposal_dist,-z)) - sum(logpdf(proposal_dist,z))
-  
-  forward_exp = auto_rwmh_step_size(target,x,logp_x,z,Δaux,loga,logb,
-                                    state.init_scale,state.C.L)
-
-  
-  θ = state.init_scale*2. ^forward_exp
-  y = x + θ * state.C.L * z
-  logp_y = LD.logdensity(target,y)
-
-  # Use the forward_exp as the starting point
-  reverse_exp = auto_rwmh_step_size(target,y,logp_y,-z,-Δaux,loga,logb,
-                                    state.init_scale,state.C.L,forward_exp)
-
-
-  # Acceptance rate in the joint space
-  logα = logp_y - logp_x + Δaux 
-
-  # The step size selector is a dirac measure so the exponents have to be the
-  # same for both directions
-  α = (forward_exp == reverse_exp) * min(1,exp(logα))
-
-  N = abs(forward_exp) + abs(reverse_exp)
-
-  if rand() < α
-    return y, logp_y, true, 1/(N+1), state
-  end
-
-  return x, logp_x, false, 1/(N+1), state
+  logα = logp_y - logp_x 
+  y, logp_y, -z,logα
 end
 
 Base.@kwdef @concrete struct FisherMALA <: AbstractMCMCKernel{Val{true}}
@@ -300,11 +333,11 @@ function (k::PathDelayedRejection)(target,x,logp_x,C::Cholesky)
     )))
 
     if rand() < α
-      return y,logps[i+1], true, α,C
+      return y,logps[i+1], true, α*(1-(i-1)/n_stages),C
     end
   end
 
-  return x, logp_x, false, α, C
+  return x, logp_x, false, α*(1-(n_stages-1)/n_stages), C
 end
 
 Base.@kwdef @concrete struct RWMH <: AbstractMCMCKernel{Val{false}}
@@ -326,7 +359,7 @@ function (k::RWMH)(target,x,logp_x,C::Cholesky)
 end
 
 Base.@kwdef @concrete struct SliceSampling <: AbstractMCMCKernel{Val{false}}
-  m = 10 # Determines the maximum number of log density evaluation in the stepping-out procedure
+  m = 20 # Determines the maximum number of log density evaluation in the stepping-out procedure
 end
 
 function init_kernel_state(_::SliceSampling,x,scale,Σ)
@@ -383,7 +416,3 @@ function (k::SliceSampling)(target,x,logp_x,state)
     end
   end
 end
-
-
-
-

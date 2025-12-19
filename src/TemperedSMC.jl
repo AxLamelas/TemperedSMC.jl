@@ -1,4 +1,4 @@
-module WasteFreeSMC
+module TemperedSMC
 
 export waste_free_smc, smc
 
@@ -26,7 +26,8 @@ include("cov_estimators.jl")
 include("wfsmc.jl")
 include("smc.jl")
 
+# Adaptive scheduler using conditional ess from 
+# "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
 
 
-
-end # module WasteFreeSMC
+end # module TemperedSMC

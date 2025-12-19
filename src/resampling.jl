@@ -120,4 +120,62 @@ function (::SystematicResampler)(
     return samples
 end
 
+struct SSPResampler <: AbstractResampler end
 
+"""
+    ssp_sampling
+
+SSP stands for Srinivasan Sampling Process.
+This resampling scheme is discussed in Gerber *et al.*[^GCW2019]. Basically, it has similar properties as systematic resampling (number of off-springs is either k or k + 1, with
+k <= N W^n < k +1), and in addition is consistent. See that paper for more
+details.
+
+# Reference
+[^GCW2019]: Gerber M., Chopin N. and Whiteley N. (2019). Negative association, ordering and convergence of resampling methods. *The Annals of Statistics* 47 (2019), no. 4, 2236–2260.
+"""
+function (::SSPResampler)(
+    weights::AbstractVector, n_resample::Int=length(weights)
+)
+    n       = length(weights)
+    m       = n_resample
+    mw      = m * weights
+    n_child = floor.(Int, mw)
+    xi      = mw - n_child
+    u       = rand(n - 1)
+    i, j    = 1, 2
+    for k in 1:(n - 1)
+        δi = min(xi[j], 1 - xi[i])
+        δj = min(xi[i], 1 - xi[j])
+        ∑δ = δi + δj
+
+        pj = (∑δ > 0) ? δi / ∑δ : 0
+        if u[k] < pj
+            j, i = i, j
+            δi   = δj
+        end
+        if xi[j] < 1 - xi[i]
+            xi[i] += δi
+            j = k + 2
+        else
+            xi[j]      -= δi
+            n_child[i] += 1
+            i          = k + 2
+        end
+    end
+
+    # due to round-off error accumulation, we may be missing one particle
+    if sum(n_child) == m - 1
+        last_ij = if j == n + 1
+            i
+        else
+            j
+        end
+        if xi[last_ij] > 0.99
+            n_child[last_ij] += 1
+        end
+    end
+    if sum(n_child) != m
+        throw(RuntimeError("ssp resampling: wrong size for output"))
+    end
+    return inverse_rle(1:n, n_child)
+end

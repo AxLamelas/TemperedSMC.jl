@@ -1,17 +1,14 @@
 function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
                         mcmc_kernel::AbstractMCMCKernel = _default_sampler(ref_logdensity,mul_logdensity),
                         cov_estimator::AbstractCovEstimator = IdentityCov(),
-                        resampler::AbstractResampler = ResidualResampler(),
+                        resampler::AbstractResampler = SSPResampler(),
                         # Should be much smaller than the number of samples
                         n_starting = _guess_n_starting(size(initial_samples,2)),
-                        # Normalized weights of the samples according to the
-                        # reference distribution
-                        initial_weights = fill(1/size(initial_samples,2),size(initial_samples,2)),
                         # Reference scale
-                        ref_cov_scale = 10*2.38^2/size(initial_samples,1),
+                        ref_cov_scale = 1.,
                         # Search scales up to `ϵ` orders of magnitude lower than 
                         # the ref scale
-                        ϵ = 6,
+                        ϵ = 4,
                         # Magnitude of the perturbation of the scale estimate
                         perturb_scale = 0.015,
                         α = 0.5,
@@ -25,6 +22,7 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
 
   samples = copy(initial_samples)
   n_dims, n_samples = size(samples)
+  lN = -log(n_samples)
 
   loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled=show_progress)
 
@@ -32,20 +30,18 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
 
   ℓ = stabilized_map(
     Base.Fix1(LD.logdensity,mul_logdensity),eachcol(samples),map_func) 
-  ℓ_adjust  = maximum(ℓ)
-  ℓ .-= ℓ_adjust
 
   state = SMCState(
-    samples,initial_weights,ℓ,ℓ_adjust,
+    samples,ℓ,
     ref_cov_scale * 10 .^ (range(-ϵ,0,length=n_starting)),
     ones(n_starting)
   )
   trace = typeof(state)[]
+  indices = resampler(state.W,n_starting) 
 
   ProgressMeter.update!(loop_prog,0)
   while state.β < 1 && state.iter < maxiter
     # `state` contains information regarding the previous step in the sequence
-
     if store_trace
       push!(trace,deepcopy(state))
     end
@@ -55,43 +51,40 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
       return store_trace ? trace : state
     end
 
-
     # Determines the current distribution in the sequence
-    new_β = _next_β(state,α*n_samples)
-
-    # Resample 
-    indices = resampler(state.W,n_starting) 
+    β = _next_β(state,α)
 
     starting_x = [view(samples,:,i) for i in indices]
     cov_estimate = estimate_cov(cov_estimator, samples,state.W,starting_x)
     chains = stabilized_map(collect(zip(starting_x,state.scales,cov_estimate)),map_func) do (x,scale,Σ)
-      interp_density = TemperedLogDensity(ref_logdensity,mul_logdensity,new_β,n_dims)
+      interp_density = TemperedLogDensity(ref_logdensity,mul_logdensity,β,n_dims)
       kernel_state = init_kernel_state(mcmc_kernel,x,scale,Σ)
       mcmc_chain(mcmc_kernel,interp_density,x,kernel_state,chain_length)
     end
 
     # Update the state
-    
     offset = 0
     for c in chains
       for j in 1:chain_length
         state.samples[:,offset+j] .= c.samples[j]
         state.ℓ[offset+j] = c.lps[j].info.mul 
+        # Because resampling occurs at every iteration
+        state.lw[offset+j] = (β-state.β)*state.ℓ[offset+j] 
       end
       offset += chain_length
     end
-    state.ℓ_adjust = maximum(ℓ)
-    state.ℓ .-= state.ℓ_adjust
     
-    # New weights do no depend on the previous weights due to resampling
-    # at every iteration
-    state.W = exp.((new_β-state.β) .* state.ℓ)
-    state.log_evidence += log(mean(state.W)) + (new_β - state.β) * ℓ_adjust 
-    
-    # Normalize weights
-    state.W ./= sum(state.W)
+    nw = logsumexp(state.lw)
+    for i in eachindex(state.W)
+      state.W[i] = exp(state.lw[i]-nw)
+    end
 
-    state.β = new_β
+    state.log_evidence += nw + lN
+
+    # Resample 
+    indices = resampler(state.W,n_starting) 
+
+    state.β = β
 
     # Average acceptance rate of the chains
     state.acceptance_rate = sum(c.n_accepts for c in chains) / ((chain_length-1)*n_starting)
@@ -135,22 +128,30 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
     ProgressMeter.next!(loop_prog,
                     showvalues=[
                     ("β",state.β),
-                    ("Maximum ℓ",state.ℓ_adjust),
+                    ("Maximum ℓ",maximum(state.ℓ)),
                     ("Log evidence",state.log_evidence),
-                    ("Acceptance rate",state.acceptance_rate)
+                    ("Acceptance rate",state.acceptance_rate),
+                    ("Median scale",median(state.scales)),
                     ])
 
   end
 
-  if store_trace
-    push!(trace,state)
-  end
-
   ProgressMeter.finish!(loop_prog)
 
+  # Final resample
   if !isone(state.β)
     @warn "Did not reach β=1 in the give limit of iterations"
+  else
+    tmp = copy(state.samples)
+    for (i,j) in enumerate(indices)
+      state.samples[:,i] .= tmp[:,j]
+    end
   end
 
-  return store_trace ? trace : state
+  if store_trace
+    push!(trace,state)
+    return trace
+  end
+
+  return state
 end

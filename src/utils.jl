@@ -1,19 +1,27 @@
 mutable struct SMCState{T}
   iter::Int
   samples::Matrix{T}
+  # Normalized Weights
   W::Vector{T}
+  # unormalized log weights
+  lw::Vector{T}
+  # Target log density
   ℓ::Vector{T}
-  ℓ_adjust::T
+  # Proposal scale
   scales::Vector{T}
+  # Proposal scale weights
   scale_weights::Vector{T}
+  # Temperature
   β::Float64
   acceptance_rate::Float64
+  # Log evidence estimate
   log_evidence::T
 end
 
-function SMCState(samples,W,ℓ,ℓ_adjust,scales,scale_weights)
+function SMCState(samples,ℓ,scales,scale_weights)
+  @assert length(ℓ) == size(samples,2)
   T = promote_type(eltype(samples),eltype(ℓ),eltype(scales),eltype(scale_weights))
-  return SMCState{T}(0,samples,W,ℓ,ℓ_adjust,scales,scale_weights,0.,0.,zero(T))
+  return SMCState{T}(0,samples,fill(1/length(ℓ),length(ℓ)),zeros(T,length(ℓ)),ℓ,scales,scale_weights,0.,0.,zero(T))
 end
 
 
@@ -28,19 +36,20 @@ function _next_β(state::SMCState,metric_target)
   high = 2one(state.β)
 
   local x # Declare variables so they are visible outside the loop
-
-  w = similar(state.ℓ)
-
-  while (high - low) / ((high + low) / 2) > 1e-6 && high > eps()
+  
+  lΔw = similar(state.ℓ)
+  ϵ = sqrt(eps(zero(state.β)))
+  
+  while (high - low) / ((high + low) / 2) > 1e-12 && high > ϵ
     x = (high + low) / 2
-    w .= exp.((x - state.β) .* state.ℓ)
-    cess = sum(state.W[i]*w[i] for i in eachindex(w))^2/
-      mean(state.W[i]*(w[i])^2 for i in eachindex(w))
+    lΔw .= (x - state.β) .* state.ℓ
+    cess = exp(2 * logsumexp(state.lw[i] + lΔw[i] for i in eachindex(lΔw)) -
+               logsumexp(state.lw[i] + 2*lΔw[i] for i in eachindex(lΔw)))/length(state.ℓ) # per sample 
 
     if cess == metric_target
       break
     end
-
+  
     if cess < metric_target
       high = x # Reduce high
     else
@@ -48,7 +57,7 @@ function _next_β(state::SMCState,metric_target)
     end
   end
 
-  return min(1, x)
+  return min(one(x), x)
 end
 
 function divisors(n)

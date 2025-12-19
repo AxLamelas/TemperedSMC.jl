@@ -1,7 +1,7 @@
-name = "WasteFreeSMC"
+name = "TemperedSMC"
 uuid = "d7b442d1-82b7-4bb3-a50f-d9293c23a923"
 authors = ["Afonso Lamelas <alamelas@ua.pt>"]
-version = "0.1.0"
+version = "0.2.0"
 
 [deps]
 ConcreteStructs = "2569d6c7-a4a2-43d3-a901-331e8e4be471"

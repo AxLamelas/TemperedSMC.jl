@@ -13,7 +13,7 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
                         perturb_scale = 0.015,
                         α = 0.5,
                         map_func = map,
-                        maxiter = 200,
+                        maxiters = 1000,
                         callback=(_) -> false,
                         store_trace = true,
                         show_progress = true
@@ -40,7 +40,7 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
   indices = resampler(state.W,n_starting) 
 
   ProgressMeter.update!(loop_prog,0)
-  while state.β < 1 && state.iter < maxiter
+  while state.β < 1 && state.iter < maxiters
     # `state` contains information regarding the previous step in the sequence
     if store_trace
       push!(trace,deepcopy(state))

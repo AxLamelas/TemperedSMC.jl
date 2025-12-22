@@ -13,7 +13,7 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
              # Magnitude of the perturbation of the scale estimate
              perturb_scale = 0.015,
              map_func = map,
-             maxiter = 200,
+             maxiters = 1000,
              callback=(_) -> false,
              store_trace = true,
              show_progress = true
@@ -41,7 +41,7 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
   resampled = false
 
   ProgressMeter.update!(loop_prog,0)
-  while state.β < 1 && state.iter < maxiter
+  while state.β < 1 && state.iter < maxiters
     # `state` contains information regarding the previous step in the sequence
     if store_trace
       push!(trace,deepcopy(state))
@@ -150,7 +150,6 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
   if !isone(state.β)
     @warn "Did not reach β=1 in the give limit of iterations"
   else
-    println(indices)
     tmp = copy(state.samples)
     for (i,j) in enumerate(indices)
       state.samples[:,i] .= tmp[:,j]

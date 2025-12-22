@@ -39,12 +39,13 @@ function _next_β(state::SMCState,metric_target)
   
   lΔw = similar(state.ℓ)
   ϵ = sqrt(eps(zero(state.β)))
+  nw = logsumexp(state.lw)
   
   while (high - low) / ((high + low) / 2) > 1e-12 && high > ϵ
     x = (high + low) / 2
     lΔw .= (x - state.β) .* state.ℓ
-    cess = exp(2 * logsumexp(state.lw[i] + lΔw[i] for i in eachindex(lΔw)) -
-               logsumexp(state.lw[i] + 2*lΔw[i] for i in eachindex(lΔw)))/length(state.ℓ) # per sample 
+    cess = exp(2 * logsumexp(state.lw[i]-nw + lΔw[i] for i in eachindex(lΔw)) -
+               logsumexp(state.lw[i]-nw + 2*lΔw[i] for i in eachindex(lΔw)))
 
     if cess == metric_target
       break

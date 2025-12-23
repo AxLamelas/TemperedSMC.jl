@@ -11,11 +11,16 @@ Base.@kwdef @concrete struct ParticleCov <: AbstractCovEstimator
 end
 
 function estimate_cov(c::ParticleCov,samples,weights,xs) 
-  fill(
-    cov(
-      c.method,samples,FrequencyWeights(weights),dims=2
-    )
-    ,length(xs))
+  if size(samples,1) == 1
+    v = var(samples,FrequencyWeights(weights))
+    [reshape([v],1,1) for _ in xs]
+  else
+    fill(
+      cov(
+        c.method,samples,FrequencyWeights(weights),dims=2
+      )
+      ,length(xs))
+  end
 end
 
 Base.@kwdef @concrete struct KernelCov <: AbstractCovEstimator 

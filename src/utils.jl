@@ -18,10 +18,10 @@ mutable struct SMCState{T}
   log_evidence::T
 end
 
-function SMCState(samples,ℓ,scales,scale_weights)
+function SMCState(samples,ℓ,scales)
   @assert length(ℓ) == size(samples,2)
-  T = promote_type(eltype(samples),eltype(ℓ),eltype(scales),eltype(scale_weights))
-  return SMCState{T}(0,samples,fill(1/length(ℓ),length(ℓ)),zeros(T,length(ℓ)),ℓ,scales,scale_weights,0.,0.,zero(T))
+  T = promote_type(eltype(samples),eltype(ℓ),eltype(scales))
+  return SMCState{T}(0,samples,fill(T(1/length(ℓ)),length(ℓ)),zeros(T,length(ℓ)),ℓ,scales,zeros(T,length(scales)),0.,0.,zero(T))
 end
 
 

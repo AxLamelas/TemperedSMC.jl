@@ -34,7 +34,6 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
   state = SMCState(
     samples,ℓ,
     ref_cov_scale * 10 .^ (range(-ϵ,0,length=n_starting)),
-    ones(n_starting)
   )
   trace = typeof(state)[]
   indices = resampler(state.W,n_starting) 
@@ -54,6 +53,17 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
     # Determines the current distribution in the sequence
     β = _next_β(state,α)
 
+    # Update evidence estimate and resample 
+    for i in eachindex(state.lw)
+      state.lw[i] = (β-state.β) * state.ℓ[i]
+    end
+    nw = logsumexp(state.lw)
+    for i in eachindex(state.W)
+      state.W[i] = exp(state.lw[i]-nw)
+    end
+    state.log_evidence += nw + lN
+    indices = resampler(state.W,n_starting) 
+
     starting_x = [view(samples,:,i) for i in indices]
     cov_estimate = estimate_cov(cov_estimator, samples,state.W,starting_x)
     chains = stabilized_map(collect(zip(starting_x,state.scales,cov_estimate)),map_func) do (x,scale,Σ)
@@ -68,22 +78,10 @@ function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
       for j in 1:chain_length
         state.samples[:,offset+j] .= c.samples[j]
         state.ℓ[offset+j] = c.lps[j].info.mul 
-        # Because resampling occurs at every iteration
-        state.lw[offset+j] = (β-state.β)*state.ℓ[offset+j] 
       end
       offset += chain_length
     end
     
-    nw = logsumexp(state.lw)
-    for i in eachindex(state.W)
-      state.W[i] = exp(state.lw[i]-nw)
-    end
-
-    state.log_evidence += nw + lN
-
-    # Resample 
-    indices = resampler(state.W,n_starting) 
-
     state.β = β
 
     # Average acceptance rate of the chains

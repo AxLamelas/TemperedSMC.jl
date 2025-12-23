@@ -32,7 +32,6 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
   state = SMCState(
     samples,ℓ,
     ref_cov_scale * 10 .^ (range(-ϵ,0,length=n_samples)),
-    ones(n_samples)
   )
   trace = typeof(state)[]
 
@@ -55,6 +54,29 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     # Determines the current distribution in the sequence
     β = _next_β(state,α)
 
+    # Evidence estimate and resample 
+    for i in eachindex(state.lw)
+      state.lw[i] += (β-state.β) * state.ℓ[i]
+    end
+    nw = logsumexp(state.lw)
+    for i in eachindex(state.W)
+      state.W[i] = exp(state.lw[i]-nw)
+    end
+
+    ess = 1/sum(abs2,state.W)
+
+    indices = if ess < resampling_α*n_samples || isone(β)
+      state.log_evidence += nw + lN
+      v = resampler(state.W) 
+      fill!(state.lw,0)
+      resampled = true
+      v
+    else
+      resampled = false
+      indices_no_resampling
+    end
+
+
     # Propagate
     starting_x = [view(samples,:,i) for i in indices]
     cov_estimate = estimate_cov(cov_estimator, samples,state.W,starting_x)
@@ -68,26 +90,6 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     for (i,c) in enumerate(chains)
       state.samples[:,i] .= c.samples[end]
       state.ℓ[i] = c.lps[end].info.mul 
-      state.lw[i] += (β-state.β) * state.ℓ[i]
-    end
-
-    nw = logsumexp(state.lw)
-    for i in eachindex(state.W)
-      state.W[i] = exp(state.lw[i]-nw)
-    end
-
-    ess = 1/sum(abs2,state.W)
-
-    # Resample 
-    indices = if ess < resampling_α*n_samples || isone(β)
-      state.log_evidence += nw + lN
-      v = resampler(state.W) 
-      fill!(state.lw,0)
-      resampled = true
-      v
-    else
-      resampled = false
-      indices_no_resampling
     end
 
     state.β = β

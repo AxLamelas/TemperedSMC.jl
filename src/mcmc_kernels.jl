@@ -182,15 +182,16 @@ struct AutoStepMALA <: AbstractAutoStep{Val{true}} end
 
 function involution(::AutoStepMALA,θ,target,x,logp_x,gradlogp_x,z,L)
   # Leapfrog integrator
-  zhalf  = z + θ/2*(L \ gradlogp_x)
-  y = L \ zhalf
+  zhalf  = z + θ/2*(L * gradlogp_x)
+  y = L * zhalf
   y .= x .+ θ .* y
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  w = -(zhalf + θ/2 * (L \ gradlogp_y))
+  w = -(zhalf + θ/2 * L * gradlogp_y)
 
-  logα = logp_y + sum(Base.Fix1(logpdf,Normal()),w) - logp_x - sum(Base.Fix1(logpdf,Normal()),z)
+  logα = logp_y - 0.5 * sum(abs2,w) -
+    logp_x + 0.5 * sum(abs2,z)
 
-  return y,logp_y,gradlogp_y, w, logα 
+  return y,logp_y,gradlogp_y, w, logα
 end
 
 struct AutoStepRWMH <: AbstractAutoStep{Val{false}} end
@@ -216,17 +217,17 @@ function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
   @unpack iter,σ2,R = state
   @unpack λ,ρ,αstar = k
 
-  σ2_rel = σ2/(sum(abs2,R)/length(x))
+  ϵ = σ2/(sum(abs2,R)/length(x))
 
-  u = randn(length(x))
-  y = x + σ2_rel/2*R*(R'*gradlogp_x) + sqrt(σ2_rel)*R*u
-
+  # Leapfrog integrator
+  velocity = randn(length(x))
+  velocity_middle  = velocity + ϵ/2*R*gradlogp_x
+  y = x + ϵ * R*velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  
-  α = min(1.,exp(logp_y-logp_x +
-                  1/2*(x-y-σ2_rel/4*R*(R'*gradlogp_y))'*gradlogp_y -
-                  1/2*(y-x-σ2_rel/4*R*(R'*gradlogp_x))'*gradlogp_x 
-                  ))
+  velocity_end = velocity_middle + ϵ/2*R*gradlogp_y
+
+  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) - 
+                  logp_x + 0.5 * sum(abs2,velocity)))
 
   s = sqrt(α)*(gradlogp_y-gradlogp_x)
 
@@ -255,22 +256,27 @@ end
 
 struct MALA <: AbstractMCMCKernel{Val{true}} end
 
-function (k::MALA)(target,x,logp_x,gradlogp_x,C::Cholesky)
-  u = randn(length(x))
-  y = x + 1/2*C.L*(C.L'*gradlogp_x) + C.L*u
+function init_kernel_state(_::MALA,x,scale,Σ) 
+  (;ϵ=scale,Minv = cholesky(Symmetric(Σ)))
+end
 
+function (k::MALA)(target,x,logp_x,gradlogp_x,state)
+  @unpack ϵ, Minv = state
+  # Leapfrog integrator
+  velocity = randn(length(x))
+  velocity_middle  = velocity + ϵ/2*Minv.L*gradlogp_x
+  y = x + ϵ * Minv.L*velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  
-  α = min(1.,exp(logp_y-logp_x +
-                  1/2*(x-y-1/4*C.L*(C.L'*gradlogp_y))'*gradlogp_y -
-                  1/2*(y-x-1/4*C.L*(C.L'*gradlogp_x))'*gradlogp_x 
-                  ))
+  velocity_end = velocity_middle + ϵ/2*Minv.L*gradlogp_y
+
+  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) - 
+                  logp_x + 0.5 * sum(abs2,velocity)))
 
   if rand() < α
-    return y, logp_y, gradlogp_y, true, α, C
+    return y, logp_y, gradlogp_y, true, α, state
   end
 
-  return x, logp_x, gradlogp_x, false, α, C
+  return x, logp_x, gradlogp_x, false, α, state
 end
 
 Base.@kwdef @concrete struct PathDelayedRejection <: AbstractMCMCKernel{Val{false}}
@@ -337,7 +343,7 @@ function (k::PathDelayedRejection)(target,x,logp_x,C::Cholesky)
     end
   end
 
-  return x, logp_x, false, α*(1-(n_stages-1)/n_stages), C
+  return x, logp_x, false, α/n_stages, C
 end
 
 Base.@kwdef @concrete struct RWMH <: AbstractMCMCKernel{Val{false}}

@@ -175,7 +175,7 @@ function (::SSPResampler)(
         end
     end
     if sum(n_child) != m
-        throw(RuntimeError("ssp resampling: wrong size for output"))
+        throw(error("ssp resampling: wrong size for output"))
     end
     return inverse_rle(1:n, n_child)
 end

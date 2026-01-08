@@ -37,7 +37,7 @@ LD.capabilities(ℓ::TemperedLogDensity) = _lowest_capability(ℓ.ref,ℓ.mul)
 function LD.logdensity(ℓ::TemperedLogDensity,θ)
   ref = LD.logdensity(ℓ.ref,θ) 
   if isinf(ref)
-    return   MetaNumber(ref,(;mul=ref,ref))
+    return MetaNumber(ref,(;mul=ref,ref))
   end
   mul = LD.logdensity(ℓ.mul,θ) 
   MetaNumber(ℓ.β * mul + ref,(;mul,ref))

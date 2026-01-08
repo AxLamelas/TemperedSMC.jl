@@ -18,10 +18,15 @@ mutable struct SMCState{T}
   log_evidence::T
 end
 
-function SMCState(samples,ℓ,scales)
+function SMCState(samples,ℓ::AbstractVector{<:MetaNumber},scales)
   @assert length(ℓ) == size(samples,2)
-  T = promote_type(eltype(samples),eltype(ℓ),eltype(scales))
-  return SMCState{T}(0,samples,fill(T(1/length(ℓ)),length(ℓ)),zeros(T,length(ℓ)),ℓ,scales,zeros(T,length(scales)),0.,0.,zero(T))
+  mul = [v.info.mul for v in ℓ]
+  ref = [v.info.ref for v in ℓ]
+  T = promote_type(eltype(samples),eltype(mul),eltype(ref),eltype(scales))
+  lw = logsumexp(ref)
+  return SMCState{T}(
+    0,samples,exp.(ref .- lw),ref,mul,
+    scales,zeros(T,length(scales)),0.,0.,lw-log(length(ref)))
 end
 
 

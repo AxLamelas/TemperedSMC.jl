@@ -2,9 +2,9 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
              mcmc_kernel::AbstractMCMCKernel = _default_sampler(ref_logdensity,mul_logdensity),
              cov_estimator::AbstractCovEstimator = IdentityCov(),
              resampler::AbstractResampler = SSPResampler(),
-             α = 0.95,
+             α = 0.5,
              resampling_α = 0.5,
-             mcmc_steps = 1,
+             mcmc_steps = 10,
              # Reference scale
              ref_cov_scale = 1.,
              # Search scales up to `ϵ` orders of magnitude lower than 
@@ -26,8 +26,11 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
 
   loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 
+  # To calculate both the mul_logden and ref_logden
+  # mul_logden is needed to calculate first β
+  ref = TemperedLogDensity(ref_logdensity,mul_logdensity,0.,n_dims)
   ℓ = stabilized_map(
-    Base.Fix1(LD.logdensity,mul_logdensity),eachcol(samples),map_func) 
+    Base.Fix1(LD.logdensity,ref),eachcol(samples),map_func) 
 
   state = SMCState(
     samples,ℓ,
@@ -36,8 +39,8 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
   trace = typeof(state)[]
 
   indices_no_resampling = collect(1:n_samples)
-  indices = indices_no_resampling
   resampled = false
+  nw = logsumexp(state.lw)
 
   ProgressMeter.update!(loop_prog,0)
   while state.β < 1 && state.iter < maxiters
@@ -54,20 +57,10 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     # Determines the current distribution in the sequence
     β = _next_β(state,α)
 
-    # Evidence estimate and resample 
-    for i in eachindex(state.lw)
-      state.lw[i] += (β-state.β) * state.ℓ[i]
-    end
-    nw = logsumexp(state.lw)
-    for i in eachindex(state.W)
-      state.W[i] = exp(state.lw[i]-nw)
-    end
-
+    # Evidence estimate and resample
     ess = 1/sum(abs2,state.W)
-
-    indices = if ess < resampling_α*n_samples || isone(β)
-      state.log_evidence += nw + lN
-      v = resampler(state.W) 
+    indices = if ess < resampling_α*n_samples
+      v = resampler(state.W)
       fill!(state.lw,0)
       resampled = true
       v
@@ -90,6 +83,19 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     for (i,c) in enumerate(chains)
       state.samples[:,i] .= c.samples[end]
       state.ℓ[i] = c.lps[end].info.mul 
+      state.lw[i] += (β-state.β) * state.ℓ[i]
+    end
+
+    prev_nw = nw
+    nw = logsumexp(state.lw)
+    for i in eachindex(state.W)
+      state.W[i] = exp(state.lw[i]-nw)
+    end
+
+    if resampled
+      state.log_evidence += nw + lN
+    else
+      state.log_evidence += nw - prev_nw
     end
 
     state.β = β
@@ -111,7 +117,7 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
       state.scale_weights[j] = w
     end
     n = sum(state.scale_weights)
-    if n == 0  
+    if n == 0
       # All weights are 0 -> reset weights
       state.scale_weights .= 1 / n_samples
       state.scales ./= 10
@@ -148,16 +154,10 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
 
   ProgressMeter.finish!(loop_prog)
 
-  # Final resample
   if !isone(state.β)
     @warn "Did not reach β=1 in the give limit of iterations"
-  else
-    tmp = copy(state.samples)
-    for (i,j) in enumerate(indices)
-      state.samples[:,i] .= tmp[:,j]
-    end
   end
-
+ 
   if store_trace
     push!(trace,state)
     return trace

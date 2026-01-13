@@ -1,6 +1,6 @@
 function waste_free_smc(ref_logdensity,mul_logdensity,initial_samples;
                         mcmc_kernel::AbstractMCMCKernel = _default_sampler(ref_logdensity,mul_logdensity),
-                        cov_estimator::AbstractCovEstimator = IdentityCov(),
+                        cov_estimator::AbstractCovEstimator = ParticleCov(),
                         resampler::AbstractResampler = SSPResampler(),
                         # Should be much smaller than the number of samples
                         n_starting = _guess_n_starting(size(initial_samples,2)),

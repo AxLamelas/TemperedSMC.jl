@@ -1,10 +1,10 @@
 function smc(ref_logdensity,mul_logdensity,initial_samples;
              mcmc_kernel::AbstractMCMCKernel = _default_sampler(ref_logdensity,mul_logdensity),
-             cov_estimator::AbstractCovEstimator = IdentityCov(),
+             cov_estimator::AbstractCovEstimator = ParticleCov(),
              resampler::AbstractResampler = SSPResampler(),
-             α = 0.5,
-             resampling_α = 0.5,
-             mcmc_steps = 10,
+             α = 0.99,
+             resampling_α = 1.,
+             mcmc_steps = 1,
              # Reference scale
              ref_cov_scale = 1.,
              # Search scales up to `ϵ` orders of magnitude lower than 

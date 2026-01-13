@@ -29,6 +29,17 @@ Base.@kwdef @concrete struct KernelCov <: AbstractCovEstimator
   γ = 0.05
 end
 
+struct ParticleVar <: AbstractCovEstimator end
+
+function estimate_cov(c::ParticleVar,samples,weights,xs) 
+  if size(samples,1) == 1
+    v = var(samples,FrequencyWeights(weights))
+    [reshape([v],1,1) for _ in xs]
+  else
+    fill(Matrix(Diagonal(var(samples,FrequencyWeights(weights),2))),length(xs))
+  end
+end
+
 function _kernel_estimate(c::KernelCov,ref_samples,wfun,xs)
   n_dims,n_samples = size(ref_samples)
   H = I - ones(n_samples,n_samples)/n_samples
@@ -43,7 +54,7 @@ function _kernel_estimate(c::KernelCov,ref_samples,wfun,xs)
     for (j,z) in enumerate(eachcol(ref_samples))
       @. M[:,j] = wfun(j) * 2/lengthscale^2 * exp(-0.5*xzdists[i,j]/lengthscale^2) * (z - xs[i])
     end
-    Symmetric(c.γ*I + M * H * M')
+    c.γ*I + M * H * M'
   end
 end
 

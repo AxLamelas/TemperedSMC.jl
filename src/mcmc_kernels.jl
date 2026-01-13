@@ -14,7 +14,7 @@ function (_::AbstractMCMCKernel{Val{true}})(target,x,logp_x,gradlogp_x,state) en
 
 # Default kernel initialization
 function init_kernel_state(_::AbstractMCMCKernel,x,scale,Σ) 
-  cholesky(Symmetric(scale*Σ))
+  cholesky(scale*Σ)
 end
 
 usesgrad(_::AbstractMCMCKernel{Val{V}}) where {V} = V
@@ -25,58 +25,11 @@ abstract type AbstractAutoStep{G} <: AbstractMCMCKernel{G} end
 
 
 function init_kernel_state(_::AbstractAutoStep,x,scale,Σ) 
-  return (;init_scale=scale,C=cholesky(Symmetric(Σ)))
+  return (;init_step=sqrt(scale),R=pdsqrt(Σ))
 end
 
-max_iters(::AbstractAutoStep) = 10
-factor_base(::AbstractAutoStep) = 4.
-
-# function auto_step_size(type, a, b, θ0, args...)
-#   base = factor_base(type)
-#
-#   θl = zero(θ0)
-#   θ = θ0
-#
-#   info...,logα = involution(type,θ,args...)
-#   extra_evals = 0
-#   α = min(1.,exp(logα))
-#
-#   if a < α < b
-#     return Normal(θ,0.1*θ), extra_evals
-#   end
-#
-#   # Search for a upper bound
-#   while α > a
-#     θ *= base
-#     info...,logα = involution(type,θ,args...)
-#     extra_evals += 1
-#     α = min(1.,exp(logα))
-#     # @info "Bound search" α θ
-#   end
-#
-#   θu = θ
-#
-#   for _ in 1:max_iters(type)
-#     θ = (θl + θu)/2
-#     info...,logα = involution(type,θ,args...)
-#     extra_evals += 1
-#     α = min(1.,exp(logα))
-#     # @info "Bisection" α a b θ θl θu
-#     if a < α < b
-#       return Normal(θ,0.1*θ), extra_evals
-#     end
-#
-#     if α > b
-#       θl = θ 
-#     end
-#
-#     if α < a
-#       θu = θ
-#     end
-#   end
-#
-#   return Normal(θ,0.05*θ), extra_evals
-# end
+max_iters(::AbstractAutoStep) = 50
+factor_base(::AbstractAutoStep) = 2.
 
 function auto_step_size(type, a, b, θ0, args...)
   loga = abs(log(a))
@@ -120,16 +73,16 @@ function (ker::AbstractAutoStep{Val{true}})(target,x,logp_x,gradlogp_x,state)
 
   jitter_dist = Normal(0.,0.5)
  
-  forward_exp,fevals = auto_step_size(ker,a,b,state.init_scale,
-                               target,x,logp_x,gradlogp_x,z,state.C.L)
+  forward_exp,fevals = auto_step_size(ker,a,b,state.init_step,
+                               target,x,logp_x,gradlogp_x,z,state.R)
 
   forward_jitter = rand(jitter_dist)
-  θ = state.init_scale * factor_base(ker)^(forward_exp+forward_jitter)
+  θ = state.init_step * factor_base(ker)^(forward_exp+forward_jitter)
 
-  y,logp_y,gradlogp_y,w,logα = involution(ker,θ,target,x,logp_x,gradlogp_x,z,state.C.L)
+  y,logp_y,gradlogp_y,w,logα = involution(ker,θ,target,x,logp_x,gradlogp_x,z,state.R)
 
-  reverse_exp, revals = auto_step_size(ker,a,b,state.init_scale,
-                               target,y,logp_y,gradlogp_y,w,state.C.L)
+  reverse_exp, revals = auto_step_size(ker,a,b,state.init_step,
+                               target,y,logp_y,gradlogp_y,w,state.R)
 
   reverse_jitter = forward_exp + forward_jitter - reverse_exp
   α = min(1,exp(logα + logpdf(jitter_dist,reverse_jitter) -
@@ -153,16 +106,16 @@ function (ker::AbstractAutoStep{Val{false}})(target,x,logp_x,state)
 
   jitter_dist = Normal(0.,0.5)
   
-  forward_exp,fevals = auto_step_size(ker,a,b,state.init_scale,
+  forward_exp,fevals = auto_step_size(ker,a,b,state.init_step,
                                target,x,logp_x,z,state.C.L)
 
   forward_jitter = rand(jitter_dist)
-  θ = state.init_scale * factor_base(ker)^(forward_exp+forward_jitter)
+  θ = state.init_step * factor_base(ker)^(forward_exp+forward_jitter)
   
-  y,logp_y,w,logα = involution(ker,θ,target,x,logp_x,z,state.C.L)
+  y,logp_y,w,logα = involution(ker,θ,target,x,logp_x,z,state.R)
 
-  reverse_exp,revals = auto_step_size(ker,a,b,state.init_scale,
-                               target,y,logp_y,w,state.C.L)
+  reverse_exp,revals = auto_step_size(ker,a,b,state.init_step,
+                               target,y,logp_y,w,state.R)
 
   reverse_jitter = forward_exp + forward_jitter - reverse_exp
   α = min(1,exp(logα + logpdf(jitter_dist,reverse_jitter) -
@@ -210,14 +163,14 @@ Base.@kwdef @concrete struct FisherMALA <: AbstractMCMCKernel{Val{true}}
 end
 
 function init_kernel_state(_::FisherMALA,x,scale,Σ)
-  (;iter=1,σ2 = scale*tr(Σ),R = sqrt(Σ))
+  (;iter=1,σ2 = scale*tr(Σ),R = pdsqrt(Σ))
 end
 
 function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
   @unpack iter,σ2,R = state
   @unpack λ,ρ,αstar = k
 
-  ϵ = σ2/(sum(abs2,R)/length(x))
+  ϵ = sqrt(σ2/(sum(abs2,R)/length(x)))
 
   # Leapfrog integrator
   velocity = randn(length(x))
@@ -226,7 +179,7 @@ function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
   velocity_end = velocity_middle + ϵ/2*R*gradlogp_y
 
-  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) - 
+  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
                   logp_x + 0.5 * sum(abs2,velocity)))
 
   s = sqrt(α)*(gradlogp_y-gradlogp_x)
@@ -240,7 +193,7 @@ function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
     ϕ = R'*s
     n = 1 + ϕ'*ϕ
     r = 1/(1+sqrt(1/n))
-    nextR = R - r/n * (R*ϕ)*ϕ' 
+    nextR = R - r/n * (R*ϕ)*ϕ'
   end
 
   nextσ2 = exp(log(σ2) + ρ*(α-αstar))
@@ -257,19 +210,19 @@ end
 struct MALA <: AbstractMCMCKernel{Val{true}} end
 
 function init_kernel_state(_::MALA,x,scale,Σ) 
-  (;ϵ=scale,Minv = cholesky(Symmetric(Σ)))
+  (;ϵ=sqrt(scale),R = pdsqrt(Σ))
 end
 
 function (k::MALA)(target,x,logp_x,gradlogp_x,state)
-  @unpack ϵ, Minv = state
+  @unpack ϵ, R = state
   # Leapfrog integrator
   velocity = randn(length(x))
-  velocity_middle  = velocity + ϵ/2*Minv.L*gradlogp_x
-  y = x + ϵ * Minv.L*velocity_middle
+  velocity_middle  = velocity + ϵ/2*R*gradlogp_x
+  y = x + ϵ * R *velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  velocity_end = velocity_middle + ϵ/2*Minv.L*gradlogp_y
+  velocity_end = velocity_middle + ϵ/2*R*gradlogp_y
 
-  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) - 
+  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
                   logp_x + 0.5 * sum(abs2,velocity)))
 
   if rand() < α

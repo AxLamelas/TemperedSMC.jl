@@ -106,9 +106,9 @@ norm2(v::AbstractVector) = dot(v,v)
 function _default_sampler(ref_logdensity,mul_logdensity)
   lc = _lowest_capability(ref_logdensity,mul_logdensity)
   if lc isa LD.LogDensityOrder{0}()
-    return AutoStepRWMH()
+    return PathDelayedRejection()
   end
-  return AutoStepMALA()
+  return FisherMALA()
 end
 
 """
@@ -122,3 +122,5 @@ function stabilized_map(f,x,map_func)
   return map_func(f,x)::Vector{T}
 end
 
+
+pdsqrt(A::W) where W <: AbstractMatrix{<:Real} = sqrt(A)::W

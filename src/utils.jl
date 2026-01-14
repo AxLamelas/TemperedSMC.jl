@@ -18,15 +18,13 @@ mutable struct SMCState{T}
   log_evidence::T
 end
 
-function SMCState(samples,ℓ::AbstractVector{<:MetaNumber},scales)
-  @assert length(ℓ) == size(samples,2)
-  mul = [v.info.mul for v in ℓ]
-  ref = [v.info.ref for v in ℓ]
-  T = promote_type(eltype(samples),eltype(mul),eltype(ref),eltype(scales))
-  lw = logsumexp(ref)
+function SMCState(samples,ℓ,scales)
+  n_samples = size(samples,2)
+  @assert length(ℓ) == n_samples
+  T = promote_type(eltype(samples),eltype(ℓ),eltype(scales))
   return SMCState{T}(
-    0,samples,exp.(ref .- lw),ref,mul,
-    scales,zeros(T,length(scales)),0.,0.,lw-log(length(ref)))
+    0,samples,fill(T(1/n_samples),n_samples),zeros(T,n_samples),ℓ,
+    scales,zeros(T,length(scales)),0.,0.,zero(T))
 end
 
 
@@ -103,9 +101,17 @@ end
 
 norm2(v::AbstractVector) = dot(v,v)
 
+_order(_::LD.LogDensityOrder{K}) where K = K
+function _lowest_capability(ℓ1::L,ℓs::Vararg{L}) where L <: LD.LogDensityOrder
+  o = mapreduce(_order,(a,b) -> a < b,ℓs,init=_order(ℓ1))
+  return LD.LogDensityOrder{o}()
+end
+
+_lowest_capability(ℓs...) = _lowest_capability((LD.capabilities(ℓ) for ℓ in ℓs)...)
+
 function _default_sampler(ref_logdensity,mul_logdensity)
   lc = _lowest_capability(ref_logdensity,mul_logdensity)
-  if lc isa LD.LogDensityOrder{0}()
+  if lc === LD.LogDensityOrder{0}()
     return PathDelayedRejection()
   end
   return FisherMALA()

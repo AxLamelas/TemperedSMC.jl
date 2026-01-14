@@ -25,13 +25,6 @@ struct TemperedLogDensity{P,L}
 end
 
 LD.dimension(ℓ::TemperedLogDensity) = ℓ.dim
-
-_order(_::LD.LogDensityOrder{K}) where K = K
-function _lowest_capability(ℓ1,ℓs...)
-  o = mapreduce(_order,(a,b) -> a < b,ℓs,init=_order(ℓ1))
-  return LD.LogDensityOrder{o}()
-end
-
 LD.capabilities(ℓ::TemperedLogDensity) = _lowest_capability(ℓ.ref,ℓ.mul)
 
 function LD.logdensity(ℓ::TemperedLogDensity,θ)

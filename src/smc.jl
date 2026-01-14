@@ -2,8 +2,8 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
              mcmc_kernel::AbstractMCMCKernel = _default_sampler(ref_logdensity,mul_logdensity),
              cov_estimator::AbstractCovEstimator = ParticleCov(),
              resampler::AbstractResampler = SSPResampler(),
-             α = 0.99,
-             resampling_α = 1.,
+             α = 0.999,
+             resampling_α = 0.5,
              mcmc_steps = 1,
              # Reference scale
              ref_cov_scale = 1.,
@@ -26,21 +26,17 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
 
   loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 
-  # To calculate both the mul_logden and ref_logden
-  # mul_logden is needed to calculate first β
-  ref = TemperedLogDensity(ref_logdensity,mul_logdensity,0.,n_dims)
   ℓ = stabilized_map(
-    Base.Fix1(LD.logdensity,ref),eachcol(samples),map_func) 
+    Base.Fix1(LD.logdensity,mul_logdensity),eachcol(samples),map_func) 
 
   state = SMCState(
     samples,ℓ,
-    ref_cov_scale * 10 .^ (range(-ϵ,0,length=n_samples)),
+    ref_cov_scale * 10 .^ (range(-ϵ,ϵ,length=n_samples)),
   )
   trace = typeof(state)[]
 
   indices_no_resampling = collect(1:n_samples)
   resampled = false
-  nw = logsumexp(state.lw)
 
   ProgressMeter.update!(loop_prog,0)
   while state.β < 1 && state.iter < maxiters
@@ -57,18 +53,27 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     # Determines the current distribution in the sequence
     β = _next_β(state,α)
 
+    for i in eachindex(state.lw)
+          state.lw[i] += (β-state.β) * state.ℓ[i]
+    end
+
+    nw = logsumexp(state.lw)
+    for i in eachindex(state.W)
+      state.W[i] = exp(state.lw[i]-nw)
+    end
+
     # Evidence estimate and resample
     ess = 1/sum(abs2,state.W)
-    indices = if ess < resampling_α*n_samples
+    indices = if ess < resampling_α*n_samples || isone(β)
       v = resampler(state.W)
       fill!(state.lw,0)
       resampled = true
+      state.log_evidence += nw + lN
       v
     else
       resampled = false
       indices_no_resampling
     end
-
 
     # Propagate
     starting_x = [view(samples,:,i) for i in indices]
@@ -83,19 +88,6 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
     for (i,c) in enumerate(chains)
       state.samples[:,i] .= c.samples[end]
       state.ℓ[i] = c.lps[end].info.mul 
-      state.lw[i] += (β-state.β) * state.ℓ[i]
-    end
-
-    prev_nw = nw
-    nw = logsumexp(state.lw)
-    for i in eachindex(state.W)
-      state.W[i] = exp(state.lw[i]-nw)
-    end
-
-    if resampled
-      state.log_evidence += nw + lN
-    else
-      state.log_evidence += nw - prev_nw
     end
 
     state.β = β
@@ -134,7 +126,7 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
       if rand() < 0.9 + 0.1*state.β # it is also tempered
         state.scales[i] = exp(log(state.scales[i]) + perturb_scale*randn())
       else
-        state.scales[i] = ref_cov_scale * 10 .^ (-ϵ*rand())
+        state.scales[i] = ref_cov_scale * 10 .^ (ϵ*(2*rand()-1))
       end
     end
     state.iter += 1

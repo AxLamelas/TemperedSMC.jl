@@ -26,8 +26,11 @@ include("cov_estimators.jl")
 include("wfsmc.jl")
 include("smc.jl")
 
-# Adaptive scheduler using conditional ess from 
+# Adaptive scheduler using conditional cess from 
 # "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
 
+# TODO: Extend the adaptivity to allow kernel dependent parameter specification
+# TODO: Consider changing the state and gradeints to expect named tuples
+# Then the Tuple handling for the Gibbs we be already permited
 
 end # module TemperedSMC

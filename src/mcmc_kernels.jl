@@ -12,17 +12,71 @@ abstract type AbstractMCMCKernel{G <: Val} end
 function (_::AbstractMCMCKernel{Val{false}})(target,x,logp_x,state) end
 function (_::AbstractMCMCKernel{Val{true}})(target,x,logp_x,gradlogp_x,state) end
 
-# Default kernel initialization
-function init_kernel_state(_::AbstractMCMCKernel,x,scale,Σ) 
-  cholesky(scale*Σ)
+# If the kernle does not need gradient information drop it
+function (k::AbstractMCMCKernel{Val{false}})(target,x,logp_x,gradlogp_x,state) 
+  k(target,x,logp_x,state) 
 end
 
+# Default kernel initialization
+init_kernel_state(_::AbstractMCMCKernel,x,scale,Σ) = cholesky(scale*Σ)
+
 usesgrad(_::AbstractMCMCKernel{Val{V}}) where {V} = V
+
+struct Gibbs{G,K<: Tuple} <: AbstractMCMCKernel{G}
+  ind_blocks::Vector{Vector{Int}}
+  kernels::K
+end
+
+function Gibbs(ind_blocks,kernels)
+  @assert length(ind_blocks) == length(kernels)
+  grad = any(usesgrad.(kernels))
+  k = (kernels...,)
+  return Gibbs{Val{grad},typeof(k)}(ind_blocks,k)
+end
+
+
+function init_kernel_state(g::Gibbs,x,scale,Σ)
+  [init_kernel_state(k,x[inds],scale,Σ[inds,inds]) for (k,inds) in zip(g.kernels,g.ind_blocks)]
+end
+
+
+function (g::Gibbs{Val{false}})(target,x,logp_x,state)
+  order = randperm(length(g.ind_blocks))
+  new_state = copy(state)
+  y = copy(x)
+  logp_y = logp_x
+  γ = 1.
+  accepted = false
+  for i in order
+    ctarget = condition(target,y,vcat((g.ind_blocks[j] for j in eachindex(g.ind_blocks) if j != i)...))
+    z, logp_y, acceptedi, γi, statei = g.kernels[i](ctarget,view(y,g.ind_blocks[i]),logp_y,state[i])
+    if acceptedi
+      y[g.ind_blocks[i]] .= z
+    end
+    new_state[i] = statei
+    accepted |= acceptedi
+    γ *= γi
+  end
+  # Geometric mean of the individual γ
+  return y, logp_y, accepted, γ ^ (1/length(order)), new_state
+end
+
+
+# TODO: Implement Gibbs to allow some or all of the kernels to use gradients
+# To do it I would have to implement a BlockLogDensity which is basically a vector
+# of LogDensityies for each bloch and some of the them can be differentiated
+# The state for such a logdensity would have to be a tuple of vectors so that each block
+# can have a different type, i.e., for a combination of discrete and continuous variables
+# It has to have a task local variable of the contitioning values
+# When it is evaluated directly it get the log value and a Tuple of gradients for the components
+# that are differentiable
+function (g::Gibbs{Val{true}})(target,x,logp_x,gradlogp_x,state)
+  throw(error("To be implemented!"))
+end
 
 
 # From https://doi.org/10.48550/arXiv.2410.18929
 abstract type AbstractAutoStep{G} <: AbstractMCMCKernel{G} end
-
 
 function init_kernel_state(_::AbstractAutoStep,x,scale,Σ) 
   return (;init_step=sqrt(scale),R=pdsqrt(Σ))
@@ -107,7 +161,7 @@ function (ker::AbstractAutoStep{Val{false}})(target,x,logp_x,state)
   jitter_dist = Normal(0.,0.5)
   
   forward_exp,fevals = auto_step_size(ker,a,b,state.init_step,
-                               target,x,logp_x,z,state.C.L)
+                               target,x,logp_x,z,state.R)
 
   forward_jitter = rand(jitter_dist)
   θ = state.init_step * factor_base(ker)^(forward_exp+forward_jitter)

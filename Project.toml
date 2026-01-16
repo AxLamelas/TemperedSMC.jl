@@ -1,7 +1,7 @@
 name = "TemperedSMC"
 uuid = "d7b442d1-82b7-4bb3-a50f-d9293c23a923"
-authors = ["Afonso Lamelas <alamelas@ua.pt>"]
 version = "0.2.0"
+authors = ["Afonso Lamelas <alamelas@ua.pt>"]
 
 [deps]
 ConcreteStructs = "2569d6c7-a4a2-43d3-a901-331e8e4be471"
@@ -17,9 +17,3 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SimpleUnPack = "ce78b400-467f-4804-87d8-8f486da07d0a"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
-
-[compat]
-ConcreteStructs = "0.2.3"
-LogDensityProblems = "2.1.2"
-ProgressMeter = "1.11.0"
-StatsFuns = "1.5.1"

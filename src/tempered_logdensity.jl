@@ -45,3 +45,31 @@ function LD.logdensity_and_gradient(ℓ::TemperedLogDensity,θ)
   MetaNumber(ℓ.β * mul + ref,(;mul,mulgrad,ref,refgrad)), ℓ.β * mulgrad + refgrad
 end
 
+struct ConditionedLogDensity{L,T}
+  ℓ::L
+  dim::Int
+  inds::Vector{Int}
+  not_inds::Vector{Int}
+  vals::Vector{T}
+end
+
+LD.dimension(c::ConditionedLogDensity) = c.dim
+LD.capabilities(c::ConditionedLogDensity) = LD.LogDensityOrder{0}()
+
+function LD.logdensity(c::ConditionedLogDensity,x)
+  y = Vector{eltype(x)}(undef,c.dim+length(c.vals))
+  y[c.inds] .= c.vals
+  y[c.not_inds] .= x
+  LD.logdensity(c.ℓ,y)
+end
+
+function condition(ℓ,x,inds::Vector{Int})
+  return ConditionedLogDensity(
+    ℓ,
+    length(x)-length(inds),
+    inds,
+    filter(x -> !(x in inds),1:length(x)),
+    x[inds]
+  )
+end
+

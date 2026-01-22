@@ -127,6 +127,3 @@ function stabilized_map(f,x,map_func)
   T = only(Base.return_types(f,(typeof(first(x)),)))
   return map_func(f,x)::Vector{T}
 end
-
-
-pdsqrt(A::W) where W <: AbstractMatrix{<:Real} = sqrt(A)::W

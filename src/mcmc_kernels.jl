@@ -49,9 +49,10 @@ function (g::Gibbs{Val{false}})(target,x,logp_x,state)
   accepted = false
   for i in order
     ctarget = condition(target,y,vcat((g.ind_blocks[j] for j in eachindex(g.ind_blocks) if j != i)...))
-    z, logp_y, acceptedi, γi, statei = g.kernels[i](ctarget,view(y,g.ind_blocks[i]),logp_y,state[i])
+    z, logp_yi, acceptedi, γi, statei = g.kernels[i](ctarget,view(y,g.ind_blocks[i]),logp_y,state[i])
     if acceptedi
       y[g.ind_blocks[i]] .= z
+      logp_y = logp_yi
     end
     new_state[i] = statei
     accepted |= acceptedi
@@ -79,7 +80,7 @@ end
 abstract type AbstractAutoStep{G} <: AbstractMCMCKernel{G} end
 
 function init_kernel_state(_::AbstractAutoStep,x,scale,Σ) 
-  return (;init_step=sqrt(scale),R=pdsqrt(Σ))
+  return (;init_step=sqrt(scale),R=cholesky(Σ).L)
 end
 
 max_iters(::AbstractAutoStep) = 50
@@ -189,11 +190,11 @@ struct AutoStepMALA <: AbstractAutoStep{Val{true}} end
 
 function involution(::AutoStepMALA,θ,target,x,logp_x,gradlogp_x,z,L)
   # Leapfrog integrator
-  zhalf  = z + θ/2*(L * gradlogp_x)
+  zhalf  = z + θ/2*(L' * gradlogp_x)
   y = L * zhalf
   y .= x .+ θ .* y
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  w = -(zhalf + θ/2 * L * gradlogp_y)
+  w = -(zhalf + θ/2 * L' * gradlogp_y)
 
   logα = logp_y - 0.5 * sum(abs2,w) -
     logp_x + 0.5 * sum(abs2,z)
@@ -217,21 +218,22 @@ Base.@kwdef @concrete struct FisherMALA <: AbstractMCMCKernel{Val{true}}
 end
 
 function init_kernel_state(_::FisherMALA,x,scale,Σ)
-  (;iter=1,σ2 = scale*tr(Σ),R = pdsqrt(Σ))
+  R = Matrix(cholesky(Σ).L)
+  (;iter=1,σ2 = sqrt(scale)*(sum(abs2,R)/length(x)),R)
 end
 
 function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
   @unpack iter,σ2,R = state
   @unpack λ,ρ,αstar = k
 
-  ϵ = sqrt(σ2/(sum(abs2,R)/length(x)))
+  ϵ = σ2/(sum(abs2,R)/length(x))
 
   # Leapfrog integrator
   velocity = randn(length(x))
-  velocity_middle  = velocity + ϵ/2*R*gradlogp_x
+  velocity_middle  = velocity + ϵ/2*R'*gradlogp_x
   y = x + ϵ * R*velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  velocity_end = velocity_middle + ϵ/2*R*gradlogp_y
+  velocity_end = velocity_middle + ϵ/2*R'*gradlogp_y
 
   α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
                   logp_x + 0.5 * sum(abs2,velocity)))
@@ -261,20 +263,79 @@ function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
   return x, logp_x, gradlogp_x, false, α, next_state
 end
 
+Base.@kwdef @concrete struct FisherULA <: AbstractMCMCKernel{Val{true}}
+  λ = 10.
+  ρ = 0.015
+  αstar = 0.574
+end
+
+function init_kernel_state(_::FisherULA,x,scale,Σ)
+  R = Matrix(cholesky(Σ).L)
+  (;iter=1,σ2 = sqrt(scale),R)
+end
+
+function (k::FisherULA)(target,x,logp_x,gradlogp_x,state)
+  @unpack iter,σ2,R = state
+  @unpack λ,ρ,αstar = k
+
+  tgrad_x = R'*gradlogp_x
+
+  # σ2 is a length-scale of the square of the gradient norm
+  ϵx = 1/sqrt(1+dot(tgrad_x,tgrad_x)/σ2)
+
+  # Leapfrog integrator
+  velocity = randn(length(x))
+  velocity_middle  = velocity + ϵx/2*R'*gradlogp_x
+  y = x + ϵx * R*velocity_middle
+  logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
+  tgrad_y = R'*gradlogp_y
+  # Adapted so that the mapping remains involutive
+  ϵy = 1/sqrt(1+dot(tgrad_y,tgrad_y)/σ2)
+  velocity_end = -ϵx/ϵy * velocity_middle - ϵy/2*R'*gradlogp_y
+
+  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
+                  logp_x + 0.5 * sum(abs2,velocity)))
+
+
+  s = sqrt(α)*(gradlogp_y-gradlogp_x)
+
+  if iter == 1
+    ϕ = R'*s
+    n = λ + ϕ'*ϕ
+    r = 1/(1+sqrt(λ/n))
+    nextR = 1/sqrt(λ) * (R - r/n * (R*ϕ)*ϕ')
+  else
+    ϕ = R'*s
+    n = 1 + ϕ'*ϕ
+    r = 1/(1+sqrt(1/n))
+    nextR = R - r/n * (R*ϕ)*ϕ'
+  end
+
+  nextσ2 = exp(log(σ2) + ρ*(α-αstar))
+
+  next_state = (;iter = iter+1,σ2 = nextσ2, R = nextR)
+
+  if isinf(logp_y)
+    return x, logp_x, gradlogp_x, false, α, next_state
+  end
+
+  return y, logp_y, gradlogp_y, true, α, next_state
+end
+
 struct MALA <: AbstractMCMCKernel{Val{true}} end
 
 function init_kernel_state(_::MALA,x,scale,Σ) 
-  (;ϵ=sqrt(scale),R = pdsqrt(Σ))
+  (;ϵ=sqrt(scale),R = cholesky(Σ).L)
 end
 
 function (k::MALA)(target,x,logp_x,gradlogp_x,state)
   @unpack ϵ, R = state
   # Leapfrog integrator
   velocity = randn(length(x))
-  velocity_middle  = velocity + ϵ/2*R*gradlogp_x
+  velocity_middle  = velocity + ϵ/2*R'*gradlogp_x
   y = x + ϵ * R *velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  velocity_end = velocity_middle + ϵ/2*R*gradlogp_y
+  velocity_end = velocity_middle + ϵ/2*R'*gradlogp_y
 
   α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
                   logp_x + 0.5 * sum(abs2,velocity)))
@@ -284,6 +345,36 @@ function (k::MALA)(target,x,logp_x,gradlogp_x,state)
   end
 
   return x, logp_x, gradlogp_x, false, α, state
+end
+
+struct ULA <: AbstractMCMCKernel{Val{true}} end
+
+function init_kernel_state(_::ULA,x,scale,Σ) 
+  (;σ2=scale,R = cholesky(Σ).L)
+end
+
+function (k::ULA)(target,x,logp_x,gradlogp_x,state)
+  @unpack σ2, R = state
+  # Leapfrog integrator
+  tgrad_x = R'*gradlogp_x
+  ϵx = 1/sqrt(1+dot(tgrad_x,tgrad_x)/σ2)
+  velocity = randn(length(x))
+  velocity_middle  = velocity + ϵx/2*R'*gradlogp_x
+  y = x + ϵx * R*velocity_middle
+  logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
+  tgrad_y = R'*gradlogp_y
+  # Adapted so that the mapping remains involutive
+  ϵy = 1/sqrt(1+dot(tgrad_y,tgrad_y)/σ2)
+  velocity_end = -ϵx/ϵy * velocity_middle - ϵy/2*R'*gradlogp_y
+
+  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
+                  logp_x + 0.5 * sum(abs2,velocity)))
+
+  if isinf(logp_y)
+    return x, logp_x, gradlogp_x, false, α, state
+  end
+
+  return y, logp_y, gradlogp_y, true, α, state
 end
 
 Base.@kwdef @concrete struct PathDelayedRejection <: AbstractMCMCKernel{Val{false}}

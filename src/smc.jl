@@ -2,7 +2,7 @@ function smc(ref_logdensity,mul_logdensity,initial_samples;
              mcmc_kernel::AbstractMCMCKernel = _default_sampler(ref_logdensity,mul_logdensity),
              cov_estimator::AbstractCovEstimator = ParticleCov(),
              resampler::AbstractResampler = SSPResampler(),
-             α = 0.999,
+             α = 0.99,
              resampling_α = 0.5,
              mcmc_steps = 1,
              # Reference scale

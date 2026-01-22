@@ -16,6 +16,7 @@ Base.:(*)(x::T, y::T) where {T<:MetaNumber} = x.val*y.val
 Base.:(-)(x::T, y::T) where {T<:MetaNumber} = x.val-y.val
 Base.:(/)(x::T, y::T) where {T<:MetaNumber} = x.val/y.val
 Base.:(^)(x::T, y::T) where {T<:MetaNumber} = x.val^y.val
+Base.isinf(x::T) where {T<:MetaNumber} = isinf(x.val)
 
 struct TemperedLogDensity{P,L}
   ref::P

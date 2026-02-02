@@ -1,102 +1,87 @@
-mutable struct SMCState{T}
-  iter::Int
-  samples::Matrix{T}
-  # Normalized Weights
-  W::Vector{T}
-  # unormalized log weights
-  lw::Vector{T}
-  # Target log density
-  ℓ::Vector{T}
-  # Proposal scale
-  scales::Vector{T}
-  # Proposal scale weights
-  scale_weights::Vector{T}
-  # Temperature
-  β::Float64
-  acceptance_rate::Float64
-  # Log evidence estimate
-  log_evidence::T
-end
-
-function SMCState(samples,ℓ,scales)
-  n_samples = size(samples,2)
-  @assert length(ℓ) == n_samples
-  T = promote_type(eltype(samples),eltype(ℓ),eltype(scales))
-  return SMCState{T}(
-    0,samples,fill(T(1/n_samples),n_samples),zeros(T,n_samples),ℓ,
-    scales,zeros(T,length(scales)),0.,0.,zero(T))
-end
-
-
 """
-  _next_β(state::SMCstate, metric_target)
+    MetaNumber(val,info::Tuple)
 
-Compute the next value for `β` and the nominal weights `w` using bisection.
-Uses the conditional effective sample size (https://www.jstor.org/stable/44861887) as a metric.
+  Number that has some metadata, but promotes to val
+  so that if an operation is performed the metadata is dropped
 """
-function _next_β(state::SMCState,metric_target)
-  low = state.β
-  high = 2one(state.β)
-
-  local x # Declare variables so they are visible outside the loop
-  
-  lΔw = similar(state.ℓ)
-  ϵ = sqrt(eps(zero(state.β)))
-  nw = logsumexp(state.lw)
-  
-  while (high - low) / ((high + low) / 2) > 1e-12 && high > ϵ
-    x = (high + low) / 2
-    lΔw .= (x - state.β) .* state.ℓ
-    cess = exp(2 * logsumexp(state.lw[i]-nw + lΔw[i] for i in eachindex(lΔw)) -
-               logsumexp(state.lw[i]-nw + 2*lΔw[i] for i in eachindex(lΔw)))
-
-    if cess == metric_target
-      break
-    end
-  
-    if cess < metric_target
-      high = x # Reduce high
-    else
-      low = x # Increase low
-    end
-  end
-
-  return min(one(x), x)
+struct MetaNumber{T<:Real,I<:NamedTuple} <: Real
+  val::T
+  info::I
 end
 
-function divisors(n)
+Base.promote(a::MetaNumber,b,cs...) = Base.promote(a.val,b,cs...)
+Base.promote(a,b::MetaNumber,cs...) = Base.promote(a,b.val,cs...)
+Base.promote(a::MetaNumber,b::MetaNumber,cs...) = Base.promote(a.val,b.val,cs...)
 
-    d = Int64[1]
+Base.convert(::Type{T},a::MetaNumber{T}) where T = a.val
+Base.convert(::Type{W},a::MetaNumber) where W<:Number = convert(W,a.val)
 
-    for (p,e) in factor(n)
-        t = Int64[]
-        r = 1
-
-        for i in 1:e
-            r *= p
-            for u in d
-                push!(t, u*r)
-            end
-        end
-
-        append!(d, t)
-    end
-
-    return sort(d)
+function Base.convert(::Type{<:MetaNumber{T,<:NamedTuple{Names,V}}},a::MetaNumber) where {T,Names,V}
+  new_info = (;(k=> a.info[k] for k in Names)...)
+  return MetaNumber(convert(T,a.val),new_info)
 end
 
-function _guess_n_starting(n_samples)
-  estimate = 2log10(n_samples)^2
-  best = 1
-  diff = Inf
-  for d in divisors(n_samples)
-    if abs(d-estimate) < diff
-      best = d
-      diff = abs(d-estimate)
-    end
-  end
 
-  return best
+Base.:(+)(x::T, y::T) where {T<:MetaNumber} = x.val+y.val
+Base.:(*)(x::T, y::T) where {T<:MetaNumber} = x.val*y.val
+Base.:(-)(x::T, y::T) where {T<:MetaNumber} = x.val-y.val
+Base.:(/)(x::T, y::T) where {T<:MetaNumber} = x.val/y.val
+Base.:(^)(x::T, y::T) where {T<:MetaNumber} = x.val^y.val
+Base.isinf(x::T) where {T<:MetaNumber} = isinf(x.val)
+Base.zero(x::T) where {T<:MetaNumber} = zero(x.val)
+Base.one(x::T) where {T<:MetaNumber} = one(x.val)
+
+struct FullLogDensity{R,M}
+  ref::R
+  mul::M
+  dim::Int
+end
+
+function FullLogDensity(ref_logdensity,mul_logdensity; dim=LD.dimension(ref_logdensity))
+  return FullLogDensity(ref_logdensity,mul_logdensity,dim)
+end
+
+LD.dimension(ℓ::FullLogDensity) = ℓ.dim
+LD.capabilities(::Type{<:FullLogDensity}) = LD.LogDensityOrder{1}()
+
+function LD.logdensity(ℓ::FullLogDensity,θ)
+  ref = LD.logdensity(ℓ.ref,θ) 
+  mul = LD.logdensity(ℓ.mul,θ)
+  MetaNumber(mul + ref,(;mul,ref))
+end
+
+function LD.logdensity_and_gradient(ℓ::FullLogDensity,θ)
+  ref,refgrad = LD.logdensity_and_gradient(ℓ.ref,θ)
+  mul,mulgrad = LD.logdensity_and_gradient(ℓ.mul,θ)
+  MetaNumber(mul + ref,(;mul,mulgrad,ref,refgrad)), mulgrad + refgrad
+end
+
+struct ConditionedLogDensity{L,T}
+  ℓ::L
+  dim::Int
+  inds::Vector{Int}
+  not_inds::Vector{Int}
+  vals::Vector{T}
+end
+
+LD.dimension(c::ConditionedLogDensity) = c.dim
+LD.capabilities(::Type{<:ConditionedLogDensity}) = LD.LogDensityOrder{0}()
+
+function LD.logdensity(c::ConditionedLogDensity,x)
+  y = Vector{eltype(x)}(undef,c.dim+length(c.vals))
+  y[c.inds] .= c.vals
+  y[c.not_inds] .= x
+  LD.logdensity(c.ℓ,y)
+end
+
+function condition(ℓ,x,inds::Vector{Int})
+  return ConditionedLogDensity(
+    ℓ,
+    length(x)-length(inds),
+    inds,
+    filter(x -> !(x in inds),1:length(x)),
+    x[inds]
+  )
 end
 
 norm2(v::AbstractVector) = dot(v,v)
@@ -118,7 +103,7 @@ function _default_sampler(ref_logdensity,mul_logdensity)
 end
 
 """
-  stabilized_map(f,x,map_func)
+    stabilized_map(f,x,map_func)
 
   Uses the `Base.map` infrastructure to infer the return type of the map, using 
   a type assertion to enforce it.

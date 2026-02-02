@@ -1,6 +1,6 @@
 name = "TemperedSMC"
 uuid = "d7b442d1-82b7-4bb3-a50f-d9293c23a923"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Afonso Lamelas <alamelas@ua.pt>"]
 
 [deps]
@@ -11,7 +11,7 @@ Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LogDensityProblems = "6fdf6af0-433a-55f7-b3ed-c6c6e0b8df7c"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
-Primes = "27ebfcd6-29c5-5fa9-bf4b-fb8fc14df3ae"
+PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SimpleUnPack = "ce78b400-467f-4804-87d8-8f486da07d0a"

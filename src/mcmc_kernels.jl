@@ -17,10 +17,46 @@ function (k::AbstractMCMCKernel{Val{false}})(target,x,logp_x,gradlogp_x,state)
   k(target,x,logp_x,state) 
 end
 
-# Default kernel initialization
-init_kernel_state(_::AbstractMCMCKernel,x,scale,Σ) = cholesky(scale*Σ)
+# Default kernel initialization: scale is the only parameter in this case
+init_kernel_state(_::AbstractMCMCKernel,x,scale,Σ) = scale*Σ
+
+# Default kernel adaptation -> only scale; custom implementation can have more parameters, i.e., NamedTuple/Vector
+function kernel_parameter_prior(_::AbstractMCMCKernel,dim)
+  ref_scale = 2.38/dim^2
+  return LogNormal(log(ref_scale),4)
+end
+
+function kernel_param_perturbative_dist(_::AbstractMCMCKernel,scale)
+  pertub_scale = 0.015
+  LogNormal(log(scale),pertub_scale)
+end
+
 
 usesgrad(_::AbstractMCMCKernel{Val{V}}) where {V} = V
+
+struct IteratedKernel{G,K<:AbstractMCMCKernel{G}} <: AbstractMCMCKernel{G}
+  kernel::K
+  n_steps::Int
+end
+
+init_kernel_state(k::IteratedKernel,x,scale,Σ) = init_kernel_state(k.kernel,x,scale,Σ)
+
+(k::IteratedKernel{Val{false}})(target,x,logp_x,state) = k(target,(x,logp_x),state)
+(k::IteratedKernel{Val{true}})(target,x,logp_x,gradlogp_x,state) = k(target,(x,logp_x,gradlogp_x),state)
+
+function (k::IteratedKernel)(target,point,state)
+  γ = 1.
+  accepted = false
+  for i in 1:k.n_steps
+    point...,acceptedi,γi,state = k.kernel(target,point...,state)
+
+    γ *= γi
+    accepted |= acceptedi
+  end
+
+  return point..., accepted, γ ^ (1/k.n_steps), state
+end
+
 
 struct Gibbs{G,K<: Tuple} <: AbstractMCMCKernel{G}
   ind_blocks::Vector{Vector{Int}}
@@ -80,7 +116,7 @@ end
 abstract type AbstractAutoStep{G} <: AbstractMCMCKernel{G} end
 
 function init_kernel_state(_::AbstractAutoStep,x,scale,Σ) 
-  return (;init_step=sqrt(scale),R=cholesky(Σ).L)
+  return (;init_step=sqrt(scale),Σ=Σ)
 end
 
 max_iters(::AbstractAutoStep) = 50
@@ -129,15 +165,15 @@ function (ker::AbstractAutoStep{Val{true}})(target,x,logp_x,gradlogp_x,state)
   jitter_dist = Normal(0.,0.5)
  
   forward_exp,fevals = auto_step_size(ker,a,b,state.init_step,
-                               target,x,logp_x,gradlogp_x,z,state.R)
+                               target,x,logp_x,gradlogp_x,z,state.Σ)
 
   forward_jitter = rand(jitter_dist)
   θ = state.init_step * factor_base(ker)^(forward_exp+forward_jitter)
 
-  y,logp_y,gradlogp_y,w,logα = involution(ker,θ,target,x,logp_x,gradlogp_x,z,state.R)
+  y,logp_y,gradlogp_y,w,logα = involution(ker,θ,target,x,logp_x,gradlogp_x,z,state.Σ)
 
   reverse_exp, revals = auto_step_size(ker,a,b,state.init_step,
-                               target,y,logp_y,gradlogp_y,w,state.R)
+                               target,y,logp_y,gradlogp_y,w,state.Σ)
 
   reverse_jitter = forward_exp + forward_jitter - reverse_exp
   α = min(1,exp(logα + logpdf(jitter_dist,reverse_jitter) -
@@ -162,15 +198,15 @@ function (ker::AbstractAutoStep{Val{false}})(target,x,logp_x,state)
   jitter_dist = Normal(0.,0.5)
   
   forward_exp,fevals = auto_step_size(ker,a,b,state.init_step,
-                               target,x,logp_x,z,state.R)
+                               target,x,logp_x,z,state.Σ)
 
   forward_jitter = rand(jitter_dist)
   θ = state.init_step * factor_base(ker)^(forward_exp+forward_jitter)
   
-  y,logp_y,w,logα = involution(ker,θ,target,x,logp_x,z,state.R)
+  y,logp_y,w,logα = involution(ker,θ,target,x,logp_x,z,state.Σ)
 
   reverse_exp,revals = auto_step_size(ker,a,b,state.init_step,
-                               target,y,logp_y,w,state.R)
+                               target,y,logp_y,w,state.Σ)
 
   reverse_jitter = forward_exp + forward_jitter - reverse_exp
   α = min(1,exp(logα + logpdf(jitter_dist,reverse_jitter) -
@@ -188,7 +224,8 @@ end
 
 struct AutoStepMALA <: AbstractAutoStep{Val{true}} end
 
-function involution(::AutoStepMALA,θ,target,x,logp_x,gradlogp_x,z,L)
+function involution(::AutoStepMALA,θ,target,x,logp_x,gradlogp_x,z,Σ)
+  L = Σ.chol.L
   # Leapfrog integrator
   zhalf  = z + θ/2*(L' * gradlogp_x)
   y = L * zhalf
@@ -196,18 +233,22 @@ function involution(::AutoStepMALA,θ,target,x,logp_x,gradlogp_x,z,L)
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
   w = -(zhalf + θ/2 * L' * gradlogp_y)
 
-  logα = logp_y - 0.5 * sum(abs2,w) -
+  logα = if isinf(logp_y)
+    logp_y - 0.5 * sum(abs2,w) -
     logp_x + 0.5 * sum(abs2,z)
+  else
+    typemin(logp_x)
+  end
 
   return y,logp_y,gradlogp_y, w, logα
 end
 
 struct AutoStepRWMH <: AbstractAutoStep{Val{false}} end
 
-function involution(::AutoStepRWMH,θ,target,x,logp_x,z,L)
-  y = x + θ*L*z
+function involution(::AutoStepRWMH,θ,target,x,logp_x,z,Σ)
+  y = x + θ*unwhiten(L,z)
   logp_y = LD.logdensity(target,y)
-  logα = logp_y - logp_x 
+  logα = logp_y - logp_x
   y, logp_y, -z,logα
 end
 
@@ -218,8 +259,7 @@ Base.@kwdef @concrete struct FisherMALA <: AbstractMCMCKernel{Val{true}}
 end
 
 function init_kernel_state(_::FisherMALA,x,scale,Σ)
-  R = Matrix(cholesky(Σ).L)
-  (;iter=1,σ2 = sqrt(scale)*(sum(abs2,R)/length(x)),R)
+  (;iter=1,σ2 = sqrt(scale)*(tr(Σ)/length(x)),R = Matrix(Σ.chol.L))
 end
 
 function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
@@ -235,8 +275,12 @@ function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
   velocity_end = velocity_middle + ϵ/2*R'*gradlogp_y
 
-  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
-                  logp_x + 0.5 * sum(abs2,velocity)))
+  α = if isinf(logp_y)
+    zero(logp_x)
+  else
+    min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
+               logp_x + 0.5 * sum(abs2,velocity)))
+  end
 
   s = sqrt(α)*(gradlogp_y-gradlogp_x)
 
@@ -270,8 +314,7 @@ Base.@kwdef @concrete struct FisherULA <: AbstractMCMCKernel{Val{true}}
 end
 
 function init_kernel_state(_::FisherULA,x,scale,Σ)
-  R = Matrix(cholesky(Σ).L)
-  (;iter=1,σ2 = sqrt(scale),R)
+  (;iter=1,σ2 = sqrt(scale),R = Matrix(Σ.chol.L))
 end
 
 function (k::FisherULA)(target,x,logp_x,gradlogp_x,state)
@@ -324,8 +367,8 @@ end
 
 struct MALA <: AbstractMCMCKernel{Val{true}} end
 
-function init_kernel_state(_::MALA,x,scale,Σ) 
-  (;ϵ=sqrt(scale),R = cholesky(Σ).L)
+function init_kernel_state(_::MALA,x,scale,Σ)
+  (;ϵ=sqrt(scale),R=Σ.chol.L)
 end
 
 function (k::MALA)(target,x,logp_x,gradlogp_x,state)
@@ -337,8 +380,12 @@ function (k::MALA)(target,x,logp_x,gradlogp_x,state)
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
   velocity_end = velocity_middle + ϵ/2*R'*gradlogp_y
 
-  α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
-                  logp_x + 0.5 * sum(abs2,velocity)))
+  α = if isinf(logp_y)
+    zero(logp_x)
+  else
+    min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
+               logp_x + 0.5 * sum(abs2,velocity)))
+  end
 
   if rand() < α
     return y, logp_y, gradlogp_y, true, α, state
@@ -349,8 +396,8 @@ end
 
 struct ULA <: AbstractMCMCKernel{Val{true}} end
 
-function init_kernel_state(_::ULA,x,scale,Σ) 
-  (;σ2=scale,R = cholesky(Σ).L)
+function init_kernel_state(_::ULA,x,scale,Σ)
+  (;σ2=scale,R = Σ.chol.L)
 end
 
 function (k::ULA)(target,x,logp_x,gradlogp_x,state)
@@ -415,7 +462,7 @@ function _logα(proposal_dist,logps,us,factor,stage)
   return backward_Δ - forward_Δ
 end
 
-function (k::PathDelayedRejection)(target,x,logp_x,C::Cholesky)
+function (k::PathDelayedRejection)(target,x,logp_x,C::PDMat)
   @unpack proposal_dist,factor,n_stages = k
   n = length(x)
 
@@ -427,7 +474,7 @@ function (k::PathDelayedRejection)(target,x,logp_x,C::Cholesky)
   local α
   for i in 1:n_stages
     us[i+1] = factor^(i-1) * rand(proposal_dist,n)
-    y = x + C.L*us[i+1]
+    y = x + unwhiten(C,us[i+1])
     logps[i+1] =  LD.logdensity(target,y)
 
     α = min(1.,exp(_logα(
@@ -448,10 +495,10 @@ Base.@kwdef @concrete struct RWMH <: AbstractMCMCKernel{Val{false}}
   proposal_dist = Normal()
 end
 
-function (k::RWMH)(target,x,logp_x,C::Cholesky)
+function (k::RWMH)(target,x,logp_x,C::PDMat)
   @unpack proposal_dist = k
   u = rand(proposal_dist,length(x))
-  y = x + C.L*u
+  y = x + unwhiten(C,u)
   logp_y = LD.logdensity(target,y)
 
   α = min(1.,exp.(logp_y + sum(logpdf(proposal_dist,-u)) - logp_x - sum(logpdf(proposal_dist,u))))
@@ -467,7 +514,7 @@ Base.@kwdef @concrete struct SliceSampling <: AbstractMCMCKernel{Val{false}}
 end
 
 function init_kernel_state(_::SliceSampling,x,scale,Σ)
-  (;w=scale/2,Σ = cholesky(Σ))
+  (;w=scale/2,Σ)
 end
 
 function (k::SliceSampling)(target,x,logp_x,state)
@@ -477,7 +524,8 @@ function (k::SliceSampling)(target,x,logp_x,state)
   counter = 0
 
   # Slice direction -> From a zero mean multivariate normal 
-  d = Σ.L * randn(length(x))
+  d = randn(length(x))
+  unwhiten!(Σ,d)
 
   # Defining the level
   z = logp_x  - rand(Exponential())

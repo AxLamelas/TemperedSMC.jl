@@ -45,7 +45,7 @@ LD.dimension(ℓ::FullLogDensity) = ℓ.dim
 LD.capabilities(::Type{<:FullLogDensity}) = LD.LogDensityOrder{1}()
 
 function LD.logdensity(ℓ::FullLogDensity,θ)
-  ref = LD.logdensity(ℓ.ref,θ) 
+  ref = LD.logdensity(ℓ.ref,θ)
   mul = LD.logdensity(ℓ.mul,θ)
   MetaNumber(mul + ref,(;mul,ref))
 end
@@ -99,7 +99,17 @@ function _default_sampler(ref_logdensity,mul_logdensity)
   if lc === LD.LogDensityOrder{0}()
     return PathDelayedRejection()
   end
-  return FisherMALA()
+  return MALA()
+end
+
+function _default_cov_estimator(n_dim,n_samples)
+  if n_samples > 2*n_dim
+    return ParticleCov()
+  elseif n_samples > n_dim
+    return ParticleVar()
+  else
+    return IdentityCov()
+  end
 end
 
 """
@@ -112,3 +122,4 @@ function stabilized_map(f,x,map_func)
   T = only(Base.return_types(f,(typeof(first(x)),)))
   return map_func(f,x)::Vector{T}
 end
+

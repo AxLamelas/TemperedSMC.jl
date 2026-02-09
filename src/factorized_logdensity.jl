@@ -1,8 +1,7 @@
 """
     n_data_points(ℓ)
 
-Number of data points associated with the factorized log density `ℓ`. See `factorized_logdensity`,
-`factorized_logdensity_and_gradient`.
+Number of data points associated with the factorized log density `ℓ`. See `factorized_logdensity`.
 
 """
 function n_data_points(ℓ) end

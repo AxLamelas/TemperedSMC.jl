@@ -1,39 +1,3 @@
-abstract type AbstractMCMCKernel{G <: Val} end
-
-# An mcmc kernel must return:
-#  - the next point
-#  - the log density of the next point
-#  - (the gradient of the logdensity of the next point)
-#  - wether the proposal was accepted or not
-#  - a factor to weight the expected squared jump distance for parameter
-#  adaptation -> usually the acceptance rate for most kernels
-#  - the new state for the kernel
-
-function (_::AbstractMCMCKernel{Val{false}})(target,x,logp_x,state) end
-function (_::AbstractMCMCKernel{Val{true}})(target,x,logp_x,gradlogp_x,state) end
-
-# If the kernle does not need gradient information drop it
-function (k::AbstractMCMCKernel{Val{false}})(target,x,logp_x,gradlogp_x,state) 
-  k(target,x,logp_x,state) 
-end
-
-# Default kernel initialization: scale is the only parameter in this case
-init_kernel_state(_::AbstractMCMCKernel,x,scale,Σ) = scale*Σ
-
-# Default kernel adaptation -> only scale; custom implementation can have more parameters, i.e., NamedTuple/Vector
-function kernel_parameter_prior(_::AbstractMCMCKernel,dim)
-  ref_scale = 2.38/dim^2
-  return LogNormal(log(ref_scale),4)
-end
-
-function kernel_param_perturbative_dist(_::AbstractMCMCKernel,scale)
-  pertub_scale = 0.015
-  LogNormal(log(scale),pertub_scale)
-end
-
-
-usesgrad(_::AbstractMCMCKernel{Val{V}}) where {V} = V
-
 struct IteratedKernel{G,K<:AbstractMCMCKernel{G}} <: AbstractMCMCKernel{G}
   kernel::K
   n_steps::Int
@@ -41,81 +5,78 @@ end
 
 init_kernel_state(k::IteratedKernel,x,scale,Σ) = init_kernel_state(k.kernel,x,scale,Σ)
 
-(k::IteratedKernel{Val{false}})(target,x,logp_x,state) = k(target,(x,logp_x),state)
-(k::IteratedKernel{Val{true}})(target,x,logp_x,gradlogp_x,state) = k(target,(x,logp_x,gradlogp_x),state)
-
-function (k::IteratedKernel)(target,point,state)
+function (k::IteratedKernel)(target,chain_state::AbstractChainState,state)
   γ = 1.
-  accepted = false
+  accepted = 0
   for i in 1:k.n_steps
-    point...,acceptedi,γi,state = k.kernel(target,point...,state)
+    chain_state,acceptedi,γi,state = k.kernel(target,chain_state,state)
 
     γ *= γi
-    accepted |= acceptedi
+    accepted += acceptedi
   end
 
-  return point..., accepted, γ ^ (1/k.n_steps), state
+  return chain_state, accepted, γ ^ (1/k.n_steps), state
 end
 
 
-struct Gibbs{G,K<: Tuple} <: AbstractMCMCKernel{G}
-  ind_blocks::Vector{Vector{Int}}
-  kernels::K
-end
-
-function Gibbs(ind_blocks,kernels)
-  @assert length(ind_blocks) == length(kernels)
-  grad = any(usesgrad.(kernels))
-  k = (kernels...,)
-  return Gibbs{Val{grad},typeof(k)}(ind_blocks,k)
-end
-
-
-function init_kernel_state(g::Gibbs,x,scale,Σ)
-  [init_kernel_state(k,x[inds],scale,Σ[inds,inds]) for (k,inds) in zip(g.kernels,g.ind_blocks)]
-end
-
-
-function (g::Gibbs{Val{false}})(target,x,logp_x,state)
-  order = randperm(length(g.ind_blocks))
-  new_state = copy(state)
-  y = copy(x)
-  logp_y = logp_x
-  γ = 1.
-  accepted = false
-  for i in order
-    ctarget = condition(target,y,vcat((g.ind_blocks[j] for j in eachindex(g.ind_blocks) if j != i)...))
-    z, logp_yi, acceptedi, γi, statei = g.kernels[i](ctarget,view(y,g.ind_blocks[i]),logp_y,state[i])
-    if acceptedi
-      y[g.ind_blocks[i]] .= z
-      logp_y = logp_yi
-    end
-    new_state[i] = statei
-    accepted |= acceptedi
-    γ *= γi
-  end
-  # Geometric mean of the individual γ
-  return y, logp_y, accepted, γ ^ (1/length(order)), new_state
-end
-
-
-# TODO: Implement Gibbs to allow some or all of the kernels to use gradients
-# To do it I would have to implement a BlockLogDensity which is basically a vector
-# of LogDensityies for each bloch and some of the them can be differentiated
-# The state for such a logdensity would have to be a tuple of vectors so that each block
-# can have a different type, i.e., for a combination of discrete and continuous variables
-# It has to have a task local variable of the contitioning values
-# When it is evaluated directly it get the log value and a Tuple of gradients for the components
-# that are differentiable
-function (g::Gibbs{Val{true}})(target,x,logp_x,gradlogp_x,state)
-  throw(error("To be implemented!"))
-end
+# struct Gibbs{G,K<: Tuple} <: AbstractMCMCKernel{G}
+#   ind_blocks::Vector{Vector{Int}}
+#   kernels::K
+# end
+#
+# function Gibbs(ind_blocks,kernels)
+#   @assert length(ind_blocks) == length(kernels)
+#   grad = any(usesgrad.(kernels))
+#   k = (kernels...,)
+#   return Gibbs{Val{grad},typeof(k)}(ind_blocks,k)
+# end
+#
+#
+# function init_kernel_state(g::Gibbs,x,scale,Σ)
+#   [init_kernel_state(k,x[inds],scale,Σ[inds,inds]) for (k,inds) in zip(g.kernels,g.ind_blocks)]
+# end
+#
+#
+# function (g::Gibbs{Val{false}})(target,x,logp_x,state)
+#   order = randperm(length(g.ind_blocks))
+#   new_state = copy(state)
+#   y = copy(x)
+#   logp_y = logp_x
+#   γ = 1.
+#   accepted = false
+#   for i in order
+#     ctarget = condition(target,y,vcat((g.ind_blocks[j] for j in eachindex(g.ind_blocks) if j != i)...))
+#     z, logp_yi, acceptedi, γi, statei = g.kernels[i](ctarget,view(y,g.ind_blocks[i]),logp_y,state[i])
+#     if acceptedi
+#       y[g.ind_blocks[i]] .= z
+#       logp_y = logp_yi
+#     end
+#     new_state[i] = statei
+#     accepted |= acceptedi
+#     γ *= γi
+#   end
+#   # Geometric mean of the individual γ
+#   return y, logp_y, accepted, γ ^ (1/length(order)), new_state
+# end
+#
+#
+# # TODO: Implement Gibbs to allow some or all of the kernels to use gradients
+# # To do it I would have to implement a BlockLogDensity which is basically a vector
+# # of LogDensityies for each bloch and some of the them can be differentiated
+# # The state for such a logdensity would have to be a tuple of vectors so that each block
+# # can have a different type, i.e., for a combination of discrete and continuous variables
+# # It has to have a task local variable of the contitioning values
+# # When it is evaluated directly it get the log value and a Tuple of gradients for the components
+# # that are differentiable
+# function (g::Gibbs{Val{true}})(target,x,logp_x,gradlogp_x,state)
+#   throw(error("To be implemented!"))
+# end
 
 
 # From https://doi.org/10.48550/arXiv.2410.18929
 abstract type AbstractAutoStep{G} <: AbstractMCMCKernel{G} end
 
-function init_kernel_state(_::AbstractAutoStep,x,scale,Σ) 
+function init_kernel_state(_::AbstractAutoStep,x,scale,Σ)
   return (;init_step=sqrt(scale),Σ=Σ)
 end
 
@@ -156,11 +117,13 @@ function auto_step_size(type, a, b, θ0, args...)
   return j, extra_evals
 end
 
-function (ker::AbstractAutoStep{Val{true}})(target,x,logp_x,gradlogp_x,state)
+function (ker::AbstractAutoStep{Val{true}})(target,chain_state::GradientChainState,state)
   z = randn(length(x))
   a0,b0 = rand(),rand()
   a = min(a0,b0)
   b = max(a0,b0)
+
+  x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
 
   jitter_dist = Normal(0.,0.5)
  
@@ -183,13 +146,13 @@ function (ker::AbstractAutoStep{Val{true}})(target,x,logp_x,gradlogp_x,state)
   # @info "" α θ logpdf(jitter_dist,reverse_jitter) logpdf(jitter_dist,forward_jitter) logp_y logp_x
 
   if rand() < α
-    return y, logp_y, gradlogp_y,true, α*(1-N/(2max_iters(ker))), state
+    return GradientChainState(y, logp_y, gradlogp_y),true, α*(1-N/(2max_iters(ker))), state
   end
 
-  return x, logp_x, gradlogp_y, false, α*(1-N/(2max_iters(ker))), state
+  return GradientChainState(x, logp_x, gradlogp_y), false, α*(1-N/(2max_iters(ker))), state
 end
 
-function (ker::AbstractAutoStep{Val{false}})(target,x,logp_x,state)
+function (ker::AbstractAutoStep{Val{false}})(target,chain_state::ChainState,state)
   z = randn(length(x))
   a0,b0 = rand(),rand()
   a = min(a0,b0)
@@ -197,6 +160,8 @@ function (ker::AbstractAutoStep{Val{false}})(target,x,logp_x,state)
 
   jitter_dist = Normal(0.,0.5)
   
+  x,logp_x= chain_state.x,chain_state.logp
+
   forward_exp,fevals = auto_step_size(ker,a,b,state.init_step,
                                target,x,logp_x,z,state.Σ)
 
@@ -216,10 +181,10 @@ function (ker::AbstractAutoStep{Val{false}})(target,x,logp_x,state)
   # @info "" α θ logpdf(jitter_dist,reverse_jitter) logpdf(jitter_dist,forward_jitter) logp_y logp_x
 
   if rand() < α
-    return y, logp_y, true, α*(1-N/(2max_iters(ker))), state
+    return ChainState(y, logp_y), true, α*(1-N/(2max_iters(ker))), state
   end
 
-  return x, logp_x, false, α*(1-N/(2max_iters(ker))), state
+  return ChainState(x, logp_x), false, α*(1-N/(2max_iters(ker))), state
 end
 
 struct AutoStepMALA <: AbstractAutoStep{Val{true}} end
@@ -262,9 +227,11 @@ function init_kernel_state(_::FisherMALA,x,scale,Σ)
   (;iter=1,σ2 = sqrt(scale)*(tr(Σ)/length(x)),R = Matrix(Σ.chol.L))
 end
 
-function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
+function (k::FisherMALA)(target,chain_state::GradientChainState,state)
   @unpack iter,σ2,R = state
   @unpack λ,ρ,αstar = k
+
+  x,logp_x,gradlogp_x = chain_state.x, chain_state.logp, chain_state.gradlogp_x
 
   ϵ = σ2/(sum(abs2,R)/length(x))
 
@@ -301,10 +268,10 @@ function (k::FisherMALA)(target,x,logp_x,gradlogp_x,state)
   next_state = (;iter = iter+1,σ2 = nextσ2, R = nextR)
 
   if rand() < α
-    return y, logp_y, gradlogp_y, true, α, next_state
+    return GradientChainState(y, logp_y, gradlogp_y), true, α, next_state
   end
 
-  return x, logp_x, gradlogp_x, false, α, next_state
+  return GradientChainState(x, logp_x, gradlogp_x), false, α, next_state
 end
 
 Base.@kwdef @concrete struct FisherULA <: AbstractMCMCKernel{Val{true}}
@@ -317,10 +284,11 @@ function init_kernel_state(_::FisherULA,x,scale,Σ)
   (;iter=1,σ2 = sqrt(scale),R = Matrix(Σ.chol.L))
 end
 
-function (k::FisherULA)(target,x,logp_x,gradlogp_x,state)
+function (k::FisherULA)(target,chain_state::GradientChainState,state)
   @unpack iter,σ2,R = state
   @unpack λ,ρ,αstar = k
 
+  x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp_x
   tgrad_x = R'*gradlogp_x
 
   # σ2 is a length-scale of the square of the gradient norm
@@ -359,10 +327,10 @@ function (k::FisherULA)(target,x,logp_x,gradlogp_x,state)
   next_state = (;iter = iter+1,σ2 = nextσ2, R = nextR)
 
   if isinf(logp_y)
-    return x, logp_x, gradlogp_x, false, α, next_state
+    return GradientChainState(x, logp_x, gradlogp_x), false, α, next_state
   end
 
-  return y, logp_y, gradlogp_y, true, α, next_state
+  return GradientChainState(y, logp_y, gradlogp_y), true, α, next_state
 end
 
 struct MALA <: AbstractMCMCKernel{Val{true}} end
@@ -371,8 +339,10 @@ function init_kernel_state(_::MALA,x,scale,Σ)
   (;ϵ=sqrt(scale),R=Σ.chol.L)
 end
 
-function (k::MALA)(target,x,logp_x,gradlogp_x,state)
+function (k::MALA)(target,chain_state::GradientChainState,state)
   @unpack ϵ, R = state
+
+  x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
   # Leapfrog integrator
   velocity = randn(length(x))
   velocity_middle  = velocity + ϵ/2*R'*gradlogp_x
@@ -388,10 +358,10 @@ function (k::MALA)(target,x,logp_x,gradlogp_x,state)
   end
 
   if rand() < α
-    return y, logp_y, gradlogp_y, true, α, state
+    return GradientChainState(y, logp_y, gradlogp_y), true, α, state
   end
 
-  return x, logp_x, gradlogp_x, false, α, state
+  return GradientChainState(x, logp_x, gradlogp_x), false, α, state
 end
 
 struct ULA <: AbstractMCMCKernel{Val{true}} end
@@ -400,8 +370,9 @@ function init_kernel_state(_::ULA,x,scale,Σ)
   (;σ2=scale,R = Σ.chol.L)
 end
 
-function (k::ULA)(target,x,logp_x,gradlogp_x,state)
+function (k::ULA)(target,chain_state::GradientChainState,state)
   @unpack σ2, R = state
+  x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
   # Leapfrog integrator
   tgrad_x = R'*gradlogp_x
   ϵx = 1/sqrt(1+dot(tgrad_x,tgrad_x)/σ2)
@@ -418,10 +389,10 @@ function (k::ULA)(target,x,logp_x,gradlogp_x,state)
                   logp_x + 0.5 * sum(abs2,velocity)))
 
   if isinf(logp_y)
-    return x, logp_x, gradlogp_x, false, α, state
+    return GradientChainState(x, logp_x, gradlogp_x), false, α, state
   end
 
-  return y, logp_y, gradlogp_y, true, α, state
+  return GradientChainState(y, logp_y, gradlogp_y), true, α, state
 end
 
 Base.@kwdef @concrete struct PathDelayedRejection <: AbstractMCMCKernel{Val{false}}
@@ -462,15 +433,17 @@ function _logα(proposal_dist,logps,us,factor,stage)
   return backward_Δ - forward_Δ
 end
 
-function (k::PathDelayedRejection)(target,x,logp_x,C::PDMat)
+function (k::PathDelayedRejection)(target,chain_state::ChainState,C::PDMat)
   @unpack proposal_dist,factor,n_stages = k
+
+  x,logp_x = chain_state.x,chain_state.logp
   n = length(x)
 
   us = Vector{Vector{eltype(x)}}(undef,n_stages+1)
   logps = Vector{typeof(logp_x)}(undef,n_stages+1)
   us[1] = zeros(n)
   logps[1] = logp_x
-  
+ 
   local α
   for i in 1:n_stages
     us[i+1] = factor^(i-1) * rand(proposal_dist,n)
@@ -484,29 +457,30 @@ function (k::PathDelayedRejection)(target,x,logp_x,C::PDMat)
     )))
 
     if rand() < α
-      return y,logps[i+1], true, α*(1-(i-1)/n_stages),C
+      return ChainState(y,logps[i+1]), true, α*(1-(i-1)/n_stages),C
     end
   end
 
-  return x, logp_x, false, α/n_stages, C
+  return chain_state, false, α/n_stages, C
 end
 
 Base.@kwdef @concrete struct RWMH <: AbstractMCMCKernel{Val{false}}
   proposal_dist = Normal()
 end
 
-function (k::RWMH)(target,x,logp_x,C::PDMat)
+function (k::RWMH)(target,chain_state::ChainState,C::PDMat)
   @unpack proposal_dist = k
+  x,logp_x = chain_state.x,chain_state.logp
   u = rand(proposal_dist,length(x))
   y = x + unwhiten(C,u)
   logp_y = LD.logdensity(target,y)
 
   α = min(1.,exp.(logp_y + sum(logpdf(proposal_dist,-u)) - logp_x - sum(logpdf(proposal_dist,u))))
   if rand() < α
-    return y, logp_y, true, α, C
+    return ChainState(y, logp_y), true, α, C
   end
 
-  return x, logp_x, false, α, C
+  return ChainState(x, logp_x), false, α, C
 end
 
 Base.@kwdef @concrete struct SliceSampling <: AbstractMCMCKernel{Val{false}}
@@ -517,10 +491,11 @@ function init_kernel_state(_::SliceSampling,x,scale,Σ)
   (;w=scale/2,Σ)
 end
 
-function (k::SliceSampling)(target,x,logp_x,state)
+function (k::SliceSampling)(target,chain_state::ChainState,state)
   @unpack w,Σ = state
   @unpack m = k
 
+  x,logp_x = chain_state.x,chain_state.logp
   counter = 0
 
   # Slice direction -> From a zero mean multivariate normal 
@@ -557,9 +532,9 @@ function (k::SliceSampling)(target,x,logp_x,state)
     counter += 1
     u = rand()
     y = x + (L + u*(R-L))*d
-    logp_y = LD.logdensity(target,y) 
+    logp_y = LD.logdensity(target,y)
     if z < logp_y
-      return y, logp_y, true, 1/counter, state
+      return ChainState(y, logp_y), true, 1/counter, state
     end
     if u < 0
       L = u

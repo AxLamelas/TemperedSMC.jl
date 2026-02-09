@@ -22,8 +22,7 @@ import LogDensityProblems as LD
 
 include("resampling.jl")
 include("sequences/sequences.jl")
-include("mcmc_kernels.jl")
-include("mcmc_chain.jl")
+include("mcmc/mcmc.jl")
 include("utils.jl")
 include("cov_estimators.jl")
 include("smc.jl")

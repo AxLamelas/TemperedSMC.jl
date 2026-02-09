@@ -90,15 +90,16 @@ function initial_logdensity(seq::AdaptiveTempering)
 end
 
 function next_logdensity!(seq::AdaptiveTempering,state::TemperedState,lw,prev_logdenisity)
-  if isone(last(state.β))
-    return nothing
-  end
   for i in eachindex(state.ℓ,prev_logdenisity)
     state.ℓ[i] = prev_logdenisity[i].info.logdensity
   end
   β = _next_β(state,lw,seq.α)
   push!(state.β,β)
   return TemperedLogDensity(seq.ℓ,β)
+end
+
+function islast(seq::AdaptiveTempering,state::TemperedState)
+  isone(last(state.β))
 end
 
 function update_state!(seq::AdaptiveTempering,state::TemperedState,logdensity)

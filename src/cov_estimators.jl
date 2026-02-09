@@ -4,10 +4,10 @@ function estimate_cov(_::AbstractCovEstimator,samples,weights) end
 
 struct IdentityCov <: AbstractCovEstimator end
 
-estimate_cov(_::IdentityCov,samples,weights,xs) = fill(Matrix(one(eltype(samples)) * I, size(samples,1),size(samples,1)),length(xs))
+estimate_cov(_::IdentityCov,samples,weights,xs) = fill(PDMat(Diagonal(ones(eltype(samples),size(samples,1)))),length(xs))
 
 Base.@kwdef @concrete struct ParticleCov <: AbstractCovEstimator 
-  method = LinearShrinkage(DiagonalUnequalVariance())
+  method = LinearShrinkage(DiagonalUnequalVariance(),:ss)
 end
 
 function estimate_cov(c::ParticleCov,samples,weights,xs) 
@@ -36,7 +36,7 @@ function estimate_cov(c::ParticleVar,samples,weights,xs)
     v = var(samples,FrequencyWeights(weights))
     [PDMat(reshape([v],1,1)) for _ in xs]
   else
-    fill(PDMat(Diagonal(var(samples,FrequencyWeights(weights),2))),length(xs))
+    fill(PDMat(Diagonal(vec(var(samples,FrequencyWeights(weights),2)))),length(xs))
   end
 end
 

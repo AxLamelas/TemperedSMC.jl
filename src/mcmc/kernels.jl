@@ -118,12 +118,12 @@ function auto_step_size(type, a, b, θ0, args...)
 end
 
 function (ker::AbstractAutoStep{Val{true}})(target,chain_state::GradientChainState,state)
+  x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
+
   z = randn(length(x))
   a0,b0 = rand(),rand()
   a = min(a0,b0)
   b = max(a0,b0)
-
-  x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
 
   jitter_dist = Normal(0.,0.5)
  
@@ -153,14 +153,14 @@ function (ker::AbstractAutoStep{Val{true}})(target,chain_state::GradientChainSta
 end
 
 function (ker::AbstractAutoStep{Val{false}})(target,chain_state::ChainState,state)
+  x,logp_x= chain_state.x,chain_state.logp
+
   z = randn(length(x))
   a0,b0 = rand(),rand()
   a = min(a0,b0)
   b = max(a0,b0)
 
   jitter_dist = Normal(0.,0.5)
-  
-  x,logp_x= chain_state.x,chain_state.logp
 
   forward_exp,fevals = auto_step_size(ker,a,b,state.init_step,
                                target,x,logp_x,z,state.Σ)
@@ -196,13 +196,13 @@ function involution(::AutoStepMALA,θ,target,x,logp_x,gradlogp_x,z,Σ)
   y = L * zhalf
   y .= x .+ θ .* y
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  w = -(zhalf + θ/2 * L' * gradlogp_y)
+  w = -(zhalf + θ/2 * (L' * gradlogp_y))
 
   logα = if isinf(logp_y)
+    typemin(logp_x)
+  else
     logp_y - 0.5 * sum(abs2,w) -
     logp_x + 0.5 * sum(abs2,z)
-  else
-    typemin(logp_x)
   end
 
   return y,logp_y,gradlogp_y, w, logα
@@ -231,7 +231,7 @@ function (k::FisherMALA)(target,chain_state::GradientChainState,state)
   @unpack iter,σ2,R = state
   @unpack λ,ρ,αstar = k
 
-  x,logp_x,gradlogp_x = chain_state.x, chain_state.logp, chain_state.gradlogp_x
+  x,logp_x,gradlogp_x = chain_state.x, chain_state.logp, chain_state.gradlogp
 
   ϵ = σ2/(sum(abs2,R)/length(x))
 
@@ -251,17 +251,18 @@ function (k::FisherMALA)(target,chain_state::GradientChainState,state)
 
   s = sqrt(α)*(gradlogp_y-gradlogp_x)
 
-  if iter == 1
+  nextR = if iter == 1
     ϕ = R'*s
     n = λ + ϕ'*ϕ
     r = 1/(1+sqrt(λ/n))
-    nextR = 1/sqrt(λ) * (R - r/n * (R*ϕ)*ϕ')
+    1/sqrt(λ) * (R - r/n * (R*ϕ)*ϕ')
   else
     ϕ = R'*s
     n = 1 + ϕ'*ϕ
     r = 1/(1+sqrt(1/n))
-    nextR = R - r/n * (R*ϕ)*ϕ'
+    R - r/n * (R*ϕ)*ϕ'
   end
+
 
   nextσ2 = exp(log(σ2) + ρ*(α-αstar))
 
@@ -288,7 +289,7 @@ function (k::FisherULA)(target,chain_state::GradientChainState,state)
   @unpack iter,σ2,R = state
   @unpack λ,ρ,αstar = k
 
-  x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp_x
+  x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
   tgrad_x = R'*gradlogp_x
 
   # σ2 is a length-scale of the square of the gradient norm

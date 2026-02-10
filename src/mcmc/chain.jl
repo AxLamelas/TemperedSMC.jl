@@ -10,7 +10,7 @@ end
 function (cb::MCMCProgressCallback)(info)
   ProgressMeter.next!(cb.prog,
                       showvalues=[
-                      ("log density",info.log_density),
+                      ("log density",info.chain_state.logp),
                       ("accepted?",info.accepted)])
   nothing
 end
@@ -47,12 +47,12 @@ function mcmc_chain(mcmc_kernel::AbstractMCMCKernel{Val{true}},target,x,state,n_
 
 
   for i in 1:n_samples-1
-    chain_state[i+1],acc,γ[i],state =
-      mcmc_kernel(target,chain_state[i],state)
+    chain[i+1],acc,γ[i],state =
+      mcmc_kernel(target,chain[i],state)
     n_accepts += acc
     callback(
       (;
-        chain_state = chain_state[i+1],
+        chain_state = chain[i+1],
         accepted=acc,
         γ=γ[i],
         state
@@ -76,12 +76,12 @@ function mcmc_chain(mcmc_kernel::AbstractMCMCKernel{Val{false}},target,x,state,n
 
 
   for i in 1:n_samples-1
-    chain_state[i+1],acc,γ[i],state =
-      mcmc_kernel(target,chain_state[i],state)
+    chain[i+1],acc,γ[i],state =
+      mcmc_kernel(target,chain[i],state)
     n_accepts += acc
     callback(
       (;
-        chain_state = chain_state[i+1],
+        chain_state = chain[i+1],
         accepted=acc,
         γ=γ[i],
         state

@@ -219,28 +219,27 @@ end
 
 Base.@kwdef @concrete struct FisherMALA <: AbstractMCMCKernel{Val{true}}
   λ = 10.
-  ρ = 0.015
   αstar = 0.574
 end
 
 function init_kernel_state(_::FisherMALA,x,scale,Σ)
-  (;iter=1,σ2 = sqrt(scale)*(tr(Σ)/length(x)),R = Matrix(Σ.chol.L))
+  (;iter=1,σ2 = scale,R = Matrix(Σ.chol.L), s=0,prev_err=0.)
 end
 
 function (k::FisherMALA)(target,chain_state::GradientChainState,state)
   @unpack iter,σ2,R = state
-  @unpack λ,ρ,αstar = k
+  @unpack λ,αstar = k
 
   x,logp_x,gradlogp_x = chain_state.x, chain_state.logp, chain_state.gradlogp
 
-  ϵ = σ2/(sum(abs2,R)/length(x))
+  ϵ = sqrt(σ2/(sum(abs2,R)/length(x)))
 
   # Leapfrog integrator
   velocity = randn(length(x))
   velocity_middle  = velocity + ϵ/2*R'*gradlogp_x
   y = x + ϵ * R*velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  velocity_end = velocity_middle + ϵ/2*R'*gradlogp_y
+  velocity_end = -velocity_middle - ϵ/2*R'*gradlogp_y
 
   α = if isinf(logp_y)
     zero(logp_x)
@@ -249,24 +248,27 @@ function (k::FisherMALA)(target,chain_state::GradientChainState,state)
                logp_x + 0.5 * sum(abs2,velocity)))
   end
 
-  s = sqrt(α)*(gradlogp_y-gradlogp_x)
+
+  s_R = sqrt(α)*(gradlogp_y-gradlogp_x)
 
   nextR = if iter == 1
-    ϕ = R'*s
+    ϕ = R'*s_R
     n = λ + ϕ'*ϕ
     r = 1/(1+sqrt(λ/n))
     1/sqrt(λ) * (R - r/n * (R*ϕ)*ϕ')
   else
-    ϕ = R'*s
+    ϕ = R'*s_R
     n = 1 + ϕ'*ϕ
     r = 1/(1+sqrt(1/n))
     R - r/n * (R*ϕ)*ϕ'
   end
 
+  # From 10.1007/s11222-008-9110-y
+  err = α-αstar
+  s = max(0,state.s+tanh(state.prev_err*err))
+  nextσ2 = exp(log(σ2) + s*err)
 
-  nextσ2 = exp(log(σ2) + ρ*(α-αstar))
-
-  next_state = (;iter = iter+1,σ2 = nextσ2, R = nextR)
+  next_state = (;iter = iter+1,σ2 = nextσ2, R = nextR, prev_err = err, s )
 
   if rand() < α
     return GradientChainState(y, logp_y, gradlogp_y), true, α, next_state
@@ -277,33 +279,27 @@ end
 
 Base.@kwdef @concrete struct FisherULA <: AbstractMCMCKernel{Val{true}}
   λ = 10.
-  ρ = 0.015
   αstar = 0.574
 end
 
 function init_kernel_state(_::FisherULA,x,scale,Σ)
-  (;iter=1,σ2 = sqrt(scale),R = Matrix(Σ.chol.L))
+  (;iter=1,σ2 = scale,R = Matrix(Σ.chol.L), s=0,prev_err=0.)
 end
 
 function (k::FisherULA)(target,chain_state::GradientChainState,state)
   @unpack iter,σ2,R = state
-  @unpack λ,ρ,αstar = k
+  @unpack λ,αstar = k
 
   x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
-  tgrad_x = R'*gradlogp_x
 
-  # σ2 is a length-scale of the square of the gradient norm
-  ϵx = 1/sqrt(1+dot(tgrad_x,tgrad_x)/σ2)
+  ϵ = sqrt(σ2/(sum(abs2,R)/length(x)))
 
   # Leapfrog integrator
   velocity = randn(length(x))
   velocity_middle  = velocity + ϵx/2*R'*gradlogp_x
-  y = x + ϵx * R*velocity_middle
+  y = x + ϵ * R*velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  tgrad_y = R'*gradlogp_y
-  # Adapted so that the mapping remains involutive
-  ϵy = 1/sqrt(1+dot(tgrad_y,tgrad_y)/σ2)
-  velocity_end = -ϵx/ϵy * velocity_middle - ϵy/2*R'*gradlogp_y
+  velocity_end = -velocity_middle - ϵ/2*R'*gradlogp_y
 
   α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
                   logp_x + 0.5 * sum(abs2,velocity)))
@@ -323,9 +319,13 @@ function (k::FisherULA)(target,chain_state::GradientChainState,state)
     nextR = R - r/n * (R*ϕ)*ϕ'
   end
 
-  nextσ2 = exp(log(σ2) + ρ*(α-αstar))
+  # From 10.1007/s11222-008-9110-y
+  err = α-αstar
+  s = max(0,state.s+tanh(state.prev_err*err))
+  nextσ2 = exp(log(σ2) + s*err)
 
-  next_state = (;iter = iter+1,σ2 = nextσ2, R = nextR)
+
+  next_state = (;iter = iter+1,σ2 = nextσ2, R = nextR, prev_err = err, s )
 
   if isinf(logp_y)
     return GradientChainState(x, logp_x, gradlogp_x), false, α, next_state
@@ -337,7 +337,7 @@ end
 struct MALA <: AbstractMCMCKernel{Val{true}} end
 
 function init_kernel_state(_::MALA,x,scale,Σ)
-  (;ϵ=sqrt(scale),R=Σ.chol.L)
+  (;ϵ=scale,R=Σ.chol.L)
 end
 
 function (k::MALA)(target,chain_state::GradientChainState,state)
@@ -349,7 +349,7 @@ function (k::MALA)(target,chain_state::GradientChainState,state)
   velocity_middle  = velocity + ϵ/2*R'*gradlogp_x
   y = x + ϵ * R *velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  velocity_end = velocity_middle + ϵ/2*R'*gradlogp_y
+  velocity_end = -velocity_middle - ϵ/2*R'*gradlogp_y
 
   α = if isinf(logp_y)
     zero(logp_x)
@@ -368,23 +368,19 @@ end
 struct ULA <: AbstractMCMCKernel{Val{true}} end
 
 function init_kernel_state(_::ULA,x,scale,Σ)
-  (;σ2=scale,R = Σ.chol.L)
+  (;ϵ=sqrt(scale/(tr(Σ)/length(x))),R=Σ.chol.L)
 end
 
 function (k::ULA)(target,chain_state::GradientChainState,state)
-  @unpack σ2, R = state
+  @unpack ϵ, R = state
+
   x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
   # Leapfrog integrator
-  tgrad_x = R'*gradlogp_x
-  ϵx = 1/sqrt(1+dot(tgrad_x,tgrad_x)/σ2)
   velocity = randn(length(x))
-  velocity_middle  = velocity + ϵx/2*R'*gradlogp_x
-  y = x + ϵx * R*velocity_middle
+  velocity_middle  = velocity + ϵ/2*R'*gradlogp_x
+  y = x + ϵ * R *velocity_middle
   logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-  tgrad_y = R'*gradlogp_y
-  # Adapted so that the mapping remains involutive
-  ϵy = 1/sqrt(1+dot(tgrad_y,tgrad_y)/σ2)
-  velocity_end = -ϵx/ϵy * velocity_middle - ϵy/2*R'*gradlogp_y
+  velocity_end = -velocity_middle - ϵ/2*R'*gradlogp_y
 
   α = min(1.,exp(logp_y - 0.5 * sum(abs2,velocity_end) -
                   logp_x + 0.5 * sum(abs2,velocity)))

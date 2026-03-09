@@ -1,4 +1,6 @@
-mutable struct SMCState{T,S<:AbstractSequenceState{T},M}
+# TODO: consider removing samples from SMCState as just using the chain state
+
+mutable struct SMCState{T,S<:AbstractSequenceState{T},C}
   # Log Density sequence
   seq_state::S
   # Particles
@@ -7,8 +9,8 @@ mutable struct SMCState{T,S<:AbstractSequenceState{T},M}
   W::Vector{T}
   # unormalized log weights
   lw::Vector{T}
-  # Target log density
-  ℓ::M
+  # MCMCM chain states
+  states::Vector{C}
   log_evidence::T
   acceptance_rate::Float64
   trcov_reweight::T
@@ -16,26 +18,29 @@ mutable struct SMCState{T,S<:AbstractSequenceState{T},M}
   resampled::Bool
 end
 
-function SMCState(seq::AbstractDistributionSequence,initial_samples,map_func)
-  target = initial_logdensity(seq)
-  ℓ = stabilized_map(
-    Base.Fix1(LD.logdensity,target),eachcol(initial_samples),map_func)
+function SMCState(seq::AbstractDistributionSequence,ref_logdensity,initial_samples,mcmc_kernel,map_func)
+  mul_logdensity = initial_logdensity(seq)
+  target = FullLogDensity(ref_logdensity,mul_logdensity)
+  states = stabilized_map(eachcol(initial_samples),map_func) do s
+    init_chain_state(mcmc_kernel,target,s)
+  end
 
-  seq_state = TemperedState(ℓ)
+  seq_state = init_sequence_state(seq,(s.logp.info.mul for s in states))
   T = eltype(seq_state)
-  lw = convert.(T,ℓ) # Could possibly be a metanumber 
+  lw = [convert(T,s.logp.info.mul) for s in states] # Could possibly be a metanumber 
   lw_norm_constant = logsumexp(lw)
   W = exp.(lw .- lw_norm_constant)
 
-  n_samples = length(ℓ)
+  n_samples = length(states)
 
   return SMCState(seq_state,deepcopy(initial_samples),W,lw,
-                  ℓ,zero(T),1.,zero(T),zero(T),false)
+                  states,zero(T),1.,zero(T),zero(T),false)
 end
 
+
 function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
-             mcmc_kernel::AbstractMCMCKernel = PathDelayedRejection(),
-             cov_estimator::AbstractCovEstimator = _default_cov_estimator(size(initial_samples)...),
+             mcmc_kernel::AbstractMCMCKernel = RWMH(),
+             metric_estimator::AbstractMetric = _default_metric_estimator(size(initial_samples)...),
              resampler::AbstractResampler = ResidualResampler(),
              resampling_α = 0.5,
              mcmc_steps = max(50,2LD.dimension(ref_logdensity)),
@@ -53,7 +58,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
 
   loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 
-  state = SMCState(seq,initial_samples,map_func)
+  state = SMCState(seq,ref_logdensity,initial_samples,mcmc_kernel,map_func)
   trace = typeof(state)[]
 
   indices_no_resampling = collect(1:n_samples)
@@ -77,7 +82,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
       return store_trace ? trace : state
     end
 
-    mul_logdensity = next_logdensity!(seq,state.seq_state,state.lw,state.ℓ)
+    mul_logdensity = next_logdensity!(seq,state.seq_state,state.lw,(s.logp.info.mul for s in state.states))
     add_incremental_weights!(state.lw,seq,state.seq_state)
 
     lw_norm_constant = logsumexp(state.lw)
@@ -104,8 +109,8 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
     # Propagate
     target = FullLogDensity(ref_logdensity,mul_logdensity)
     starting_x = [state.samples[:,i] for i in indices]
-    cov_estimate = estimate_cov(cov_estimator, state.samples,state.W,starting_x)
-    chains = stabilized_map(collect(zip(starting_x,ker_params,cov_estimate)),map_func) do (x,p,Σ)
+    metric_estimate = estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
+    chains = stabilized_map(collect(zip(starting_x,ker_params,metric_estimate)),map_func) do (x,p,Σ)
       kernel_state = init_kernel_state(mcmc_kernel,x,p,Σ)
       iterate_mcmc(mcmc_kernel,target,x,kernel_state,n_batch_steps)
     end
@@ -113,7 +118,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
     n_steps = n_batch_steps
     prev_msjd = 0.
     while adapt_mcmc_steps # Apply kernel until msjd stabilizes
-      msjd = mean(zip(starting_x,chains,cov_estimate)) do (x,c,Σ)
+      msjd = mean(zip(starting_x,chains,metric_estimate)) do (x,c,Σ)
         invquad(Σ,c.chain_state.x - x)
       end
       if (msjd-prev_msjd) < adapt_stability*prev_msjd || n_steps >= mcmc_steps break end
@@ -128,11 +133,12 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
     # Update particle information
     for (i,c) in enumerate(chains)
       state.samples[:,i] .= c.chain_state.x
-      state.ℓ[i] = c.chain_state.logp.info.mul
+      state.states[i] = c.chain_state
 
-      Σ = cov_estimate[i]
+      Σ = metric_estimate[i]
       # Update param weights following 10.1214/13-BA814
       ker_param_weights[i] = (c.γ)^(1/n_steps) * invquad(Σ,c.chain_state.x - starting_x[i])
+      # ker_param_weights[i] = invquad(Σ,c.chain_state.x - starting_x[i])
     end
 
     n = sum(ker_param_weights)
@@ -177,11 +183,10 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
 end
 
 function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
-                        mcmc_kernel::AbstractMCMCKernel = PathDelayedRejection(),
-                        cov_estimator::AbstractCovEstimator = _default_cov_estimator(size(initial_samples)...),
+                        mcmc_kernel::AbstractMCMCKernel = RWMH(),
+                        metric_estimator::AbstractMetric = _default_metric_estimator(size(initial_samples)...),
                         resampler::AbstractResampler = ResidualResampler(),
                         n_starting = max(2,round(Int,cbrt(size(initial_samples,2)))),
-                        mcmc_steps = 5,
                         map_func = map,
                         callback=(_) -> false,
                         store_trace = true,
@@ -199,7 +204,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 
   loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 
-  state = SMCState(seq,initial_samples,map_func)
+  state = SMCState(seq,ref_logdensity,initial_samples,mcmc_kernel,map_func)
   trace = typeof(state)[]
 
   indices_no_resampling = collect(1:n_samples)
@@ -221,7 +226,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
       return store_trace ? trace : state
     end
 
-    mul_logdensity = next_logdensity!(seq,state.seq_state,state.lw,state.ℓ)
+    mul_logdensity = next_logdensity!(seq,state.seq_state,state.lw,(s.logp.info.mul for s in state.states))
 
     add_incremental_weights!(state.lw,seq,state.seq_state)
 
@@ -239,9 +244,9 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 
     # Propagate
     target = FullLogDensity(ref_logdensity,mul_logdensity)
-    starting_x = [view(state.samples,:,i) for i in indices]
-    cov_estimate = estimate_cov(cov_estimator, state.samples,state.W,starting_x)
-    chains = stabilized_map(collect(zip(starting_x,ker_params,cov_estimate)),map_func) do (x,p,Σ)
+    starting_x = [state.samples[:,i] for i in indices]
+    metric_estimate = estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
+    chains = stabilized_map(collect(zip(starting_x,ker_params,metric_estimate)),map_func) do (x,p,Σ)
       kernel_state = init_kernel_state(mcmc_kernel,x,p,Σ)
       mcmc_chain(mcmc_kernel,target,x,kernel_state,chain_length)
     end
@@ -251,8 +256,8 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
     for c in chains
       for j in 1:chain_length
         i = offset+j
-        state.samples[:,i] .= c.samples[j]
-        state.ℓ[i] = c.lps[j].info.mul
+        state.samples[:,i] .= c.states[j].x
+        state.states[i] = c.states[j]
       end
       offset += chain_length
     end
@@ -260,16 +265,16 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
     state.trcov_mcmc = sum(var(state.samples,FrequencyWeights(state.W),2))
 
     # Average acceptance rate of the chains
-    state.acceptance_rate = sum(c.n_accepts for c in chains) / (mcmc_steps*n_samples)
+    state.acceptance_rate = sum(c.n_accepts for c in chains) / ((chain_length-1)*n_starting)
 
     # Resample scale following 10.1214/13-BA814
     for j in 1:n_starting
       c = chains[j]
-      Σ = cov_estimate[j]
+      Σ = metric_estimate[j]
       # Rao-Blackwellized estimator of the Expected squared jump distance
       w = 0.
       for i in 1:chain_length-1
-        δ = c.samples[i+1]-c.samples[i]
+        δ = c.states[i+1].x-c.states[i].x
         w += c.γ[i] * invquad(Σ,δ)
         # w += invquad(Σ,δ)
       end

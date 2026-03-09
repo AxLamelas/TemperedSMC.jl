@@ -21,10 +21,10 @@ import LogDensityProblems as LD
 # Kernel interface
 
 include("resampling.jl")
-include("sequences/sequences.jl")
 include("mcmc/mcmc.jl")
+include("sequences/sequences.jl")
 include("utils.jl")
-include("cov_estimators.jl")
+include("metric_estimators.jl")
 include("smc.jl")
 
 

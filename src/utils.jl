@@ -102,7 +102,7 @@ function _default_sampler(ref_logdensity,mul_logdensity)
   return MALA()
 end
 
-function _default_cov_estimator(n_dim,n_samples)
+function _default_metric_estimator(n_dim,n_samples)
   if n_samples > 2*n_dim
     return ParticleCov()
   elseif n_samples > n_dim
@@ -122,4 +122,34 @@ function stabilized_map(f,x,map_func)
   T = only(Base.return_types(f,(typeof(first(x)),)))
   return map_func(f,x)::Vector{T}
 end
+
+
+# TODO: Switch to a different method after some size
+function ensure_posdef(M::Matrix{<:Real})
+  if !issymmetric(M)
+    M = (M + M')/2
+  end
+  F = eigen(Symmetric(M))
+  for i in eachindex(F.values)
+    F.values[i] = max(F.values[i],1e-8)
+  end
+ 
+  # Symmetric must be used due to numerical precision
+  return Symmetric(Matrix(F))
+end
+
+# As ensure_posdef often involves a matrix decomposition the
+# inverse can be computed more efficiently
+function ensure_posdef_and_invert(M::Matrix{<:Real})
+  if !issymmetric(M)
+    M = (M + M')/2
+  end
+  F = eigen(Symmetric(M))
+  for i in eachindex(F.values)
+    F.values[i] = max(F.values[i],1e-8)
+  end
+
+  return Symmetric(F.vectors' * inv(Diagonal(F.values)) * F.vectors)
+end
+
 

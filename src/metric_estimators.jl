@@ -1,37 +1,35 @@
-abstract type AbstractCovEstimator end
+abstract type AbstractMetric end
 
-function estimate_cov(_::AbstractCovEstimator,samples,weights) end
+function estimate_metric(_::AbstractMetric,samples,weights,states,xs) end
 
-struct IdentityCov <: AbstractCovEstimator end
+struct IdentityMetric <: AbstractMetric end
 
-estimate_cov(_::IdentityCov,samples,weights,xs) = fill(PDMat(Diagonal(ones(eltype(samples),size(samples,1)))),length(xs))
+estimate_metric(_::IdentityMetric,samples,weights,_,xs) = fill(PDMat(Diagonal(ones(eltype(samples),size(samples,1)))),length(xs))
 
-Base.@kwdef @concrete struct ParticleCov <: AbstractCovEstimator 
-  method = LinearShrinkage(DiagonalUnequalVariance(),:ss)
-end
+struct ParticleCov <: AbstractMetric end
 
-function estimate_cov(c::ParticleCov,samples,weights,xs) 
+function estimate_metric(c::ParticleCov,samples,weights,_,xs)
   if size(samples,1) == 1
     v = var(samples,FrequencyWeights(weights))
     [PDMat(reshape([v],1,1)) for _ in xs]
   else
     fill(
-      PDMat(cov(
-        c.method,samples,FrequencyWeights(weights),dims=2
-      ))
+      PDMat(ensure_posdef(cov(
+        samples,FrequencyWeights(weights),2
+      )))
       ,length(xs))
   end
 end
 
-Base.@kwdef @concrete struct KernelCov <: AbstractCovEstimator
+Base.@kwdef @concrete struct KernelCov <: AbstractMetric
   max_samples = 1000
   resampler = ResidualResampler()
   γ = 0.05
 end
 
-struct ParticleVar <: AbstractCovEstimator end
+struct ParticleVar <: AbstractMetric end
 
-function estimate_cov(c::ParticleVar,samples,weights,xs) 
+function estimate_metric(c::ParticleVar,samples,weights,_,xs)
   if size(samples,1) == 1
     v = var(samples,FrequencyWeights(weights))
     [PDMat(reshape([v],1,1)) for _ in xs]
@@ -58,7 +56,7 @@ function _kernel_estimate(c::KernelCov,V,ref_samples,wfun,xs)
   end
 end
 
-function estimate_cov(c::KernelCov,samples,weights,xs)
+function estimate_metric(c::KernelCov,samples,weights,_,xs)
   V = Diagonal(var(samples,FrequencyWeights(weights),2))
   n_samples = size(samples,2)
   if n_samples > c.max_samples
@@ -69,3 +67,13 @@ function estimate_cov(c::KernelCov,samples,weights,xs)
   end
 end
 
+struct EmpiricalFisher <: AbstractMetric end
+
+function estimate_metric(c::EmpiricalFisher,samples,weights,states::AbstractVector{<:GradientChainState},xs)
+  # TODO:  Make this more efficient
+  F = mean(states) do s
+    s.gradlogp * s.gradlogp'
+  end
+
+  fill(PDMat(ensure_posdef_and_invert(F)),length(xs))
+end

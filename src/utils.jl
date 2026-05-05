@@ -125,31 +125,35 @@ end
 
 
 # TODO: Switch to a different method after some size
-function ensure_posdef(M::Matrix{<:Real})
-  if !issymmetric(M)
-    M = (M + M')/2
-  end
-  F = eigen(Symmetric(M))
-  for i in eachindex(F.values)
-    F.values[i] = max(F.values[i],1e-8)
-  end
- 
-  # Symmetric must be used due to numerical precision
-  return Symmetric(Matrix(F))
+function ensure_posdef(M::Matrix{T}) where T <: Real
+	ε = sqrt(eps(T))
+	invε = inv(ε)
+	if !issymmetric(M)
+		M = (M + M')/2
+	end
+	F = eigen(Symmetric(M))
+	for i in eachindex(F.values)
+		F.values[i] = clamp(F.values[i],ε,invε)
+	end
+
+	# Symmetric must be used due to numerical precision
+	return Symmetric(Matrix(F))
 end
 
 # As ensure_posdef often involves a matrix decomposition the
 # inverse can be computed more efficiently
-function ensure_posdef_and_invert(M::Matrix{<:Real})
-  if !issymmetric(M)
-    M = (M + M')/2
-  end
-  F = eigen(Symmetric(M))
-  for i in eachindex(F.values)
-    F.values[i] = max(F.values[i],1e-8)
-  end
+function ensure_posdef_and_invert(M::Matrix{T}) where T <: Real
+	ε = sqrt(eps(T))
+	invε = inv(ε)
+	if !issymmetric(M)
+		M = (M + M')/2
+	end
+	F = eigen(Symmetric(M))
+	for i in eachindex(F.values)
+		F.values[i] = clamp(1/F.values[i],ε,invε)
+	end
 
-  return Symmetric(F.vectors' * inv(Diagonal(F.values)) * F.vectors)
+	return Symmetric(F.vectors * Diagonal(F.values) * F.vectors')
 end
 
 

@@ -9,16 +9,14 @@ estimate_metric(_::IdentityMetric,samples,weights,_,xs) = fill(PDMat(Diagonal(on
 struct ParticleCov <: AbstractMetric end
 
 function estimate_metric(c::ParticleCov,samples,weights,_,xs)
-  if size(samples,1) == 1
-    v = var(samples,FrequencyWeights(weights))
-    [PDMat(reshape([v],1,1)) for _ in xs]
-  else
-    fill(
-      PDMat(ensure_posdef(cov(
-        samples,FrequencyWeights(weights),2
-      )))
-      ,length(xs))
-  end
+	if size(samples,1) == 1
+		v = var(samples,FrequencyWeights(weights))
+		Fill(PDMat(reshape([v],1,1)),length(xs))
+	else
+		Fill(PDMat(ensure_posdef(cov(
+			samples,FrequencyWeights(weights),2
+		))),length(xs))
+	end
 end
 
 Base.@kwdef @concrete struct KernelCov <: AbstractMetric
@@ -30,12 +28,12 @@ end
 struct ParticleVar <: AbstractMetric end
 
 function estimate_metric(c::ParticleVar,samples,weights,_,xs)
-  if size(samples,1) == 1
-    v = var(samples,FrequencyWeights(weights))
-    [PDMat(reshape([v],1,1)) for _ in xs]
-  else
-    fill(PDMat(Diagonal(vec(var(samples,FrequencyWeights(weights),2)))),length(xs))
-  end
+	if size(samples,1) == 1
+		v = var(samples,FrequencyWeights(weights))
+		Fill(PDMat(reshape([v],1,1)),length(xs))
+	else
+		Fill(PDMat(Diagonal(vec(var(samples,FrequencyWeights(weights),2)))),length(xs))
+	end
 end
 
 function _kernel_estimate(c::KernelCov,V,ref_samples,wfun,xs)
@@ -75,5 +73,11 @@ function estimate_metric(c::EmpiricalFisher,samples,weights,states::AbstractVect
     s.gradlogp * s.gradlogp'
   end
 
-  fill(PDMat(ensure_posdef_and_invert(F)),length(xs))
+  Fill(PDMat(ensure_posdef_and_invert(F)),length(xs))
+end
+
+struct ParticleRepresentation <: AbstractMetric end
+
+function estimate_metric(_::ParticleRepresentation,samples,weights,states,xs)
+	Fill(samples,length(xs))
 end

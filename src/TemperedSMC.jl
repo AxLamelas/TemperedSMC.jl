@@ -14,6 +14,7 @@ using ProgressMeter
 using ConcreteStructs
 using StatsFuns
 using PDMats
+using FillArrays
 
 import LogDensityProblems as LD
 

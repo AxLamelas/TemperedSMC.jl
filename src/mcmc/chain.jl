@@ -24,15 +24,26 @@ iterate_mcmc(mcmc_kernel::AbstractMCMCKernel{Val{true}},target,x::AbstractVector
 iterate_mcmc(mcmc_kernel::AbstractMCMCKernel{Val{false}},target,x::AbstractVector,state,n_steps::Int) = 
   iterate_mcmc(mcmc_kernel,target,ChainState(x,LD.logdensity(target,x)),state,n_steps)
 
-function iterate_mcmc(mcmc_kernel::AbstractMCMCKernel,target,chain_state::AbstractChainState,state,n_steps::Int;
-                         γ = 1.,n_accepts =0)
-  for i in 1:n_steps
-    chain_state,acc,γi,state = mcmc_kernel(target,chain_state,state)
-    n_accepts += acc
-    γ *= γi
-  end
 
-  return (;n_accepts,chain_state,kernel_state=state,γ)
+function iterate_mcmc(mcmc_kernel::AbstractMCMCKernel,target,chain_state::AbstractChainState,state,n_steps::Int;
+					  logγ = 0.,n_accepts =0)
+	if isnan(logγ)
+		throw(error("Called with NaN logγ"))
+	end
+	for i in 1:n_steps
+		chain_state,acc,γi,state = mcmc_kernel(target,chain_state,state)
+		n_accepts += acc
+		logγ += if acc 
+			log(γi)
+		else
+			log(1-γi)
+		end
+		if isnan(logγ)
+			throw(error("Resulted in NaN logγ when updating with $(γi) and move was acc=$(acc)"))
+		end
+	end
+
+	return (;n_accepts,chain_state,kernel_state=state,logγ)
 end
 
 

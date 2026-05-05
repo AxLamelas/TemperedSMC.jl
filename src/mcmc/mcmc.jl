@@ -34,18 +34,6 @@ init_kernel_state(_::AbstractMCMCKernel,x,scale,Σ) = scale*Σ
 usesgrad(_::AbstractMCMCKernel{Val{V}}) where {V} = V
 
 
-# Default kernel adaptation -> only scale; custom implementation can have more parameters, i.e., NamedTuple/Vector
-function kernel_parameter_prior(_::AbstractMCMCKernel,dim)
-  ref_scale = 2.38/dim^2
-  return LogNormal(log(ref_scale),2)
-end
-
-function kernel_param_perturbative_dist(_::AbstractMCMCKernel,scale)
-  pertub_scale = 0.2
-  # LogNormal(log(scale)-pertub_scale^2/2,pertub_scale)
-  LogNormal(log(scale),pertub_scale)
-end
-
-
 include("chain.jl")
 include("kernels.jl")
+include("kernel_parameters.jl")

@@ -80,7 +80,7 @@ function mcmc_chain(mcmc_kernel::AbstractMCMCKernel{Val{false}},target,x,state,n
   n_accepts = 0
 
   T = eltype(x)
-  chain_state = ChainState(x,LD.logdensity(target,x)...)
+  chain_state = ChainState(x,LD.logdensity(target,x))
   chain = Vector{typeof(chain_state)}(undef,n_samples)
   chain[1] = chain_state
   γ = Vector{T}(undef,n_samples-1)

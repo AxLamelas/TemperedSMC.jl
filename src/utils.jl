@@ -115,12 +115,25 @@ end
 """
     stabilized_map(f,x,map_func)
 
-  Uses the `Base.map` infrastructure to infer the return type of the map, using 
-  a type assertion to enforce it.
+  Apply an arbitrary mapping function, `map_func`, and stabilize is output type.
+
 """
-function stabilized_map(f,x,map_func)
-  T = only(Base.return_types(f,(typeof(first(x)),)))
-  return map_func(f,x)::Vector{T}
+function stabilized_map(f, x, map_func)
+    raw_result = map_func(f, x)
+    
+    # 1. Zero-allocation fast path: If the backend already gave us a concrete vector, 
+    # just hand it directly to the function barrier. No copies made.
+    if isconcretetype(eltype(raw_result))
+        return enforce_type(raw_result)
+    else
+        # 2. Allocating fallback: Only copy if we got a Vector{Any} (e.g. from Distributed)
+        tight_result = identity.(raw_result)
+        return enforce_type(tight_result)
+    end
+end
+
+function enforce_type(res::AbstractVector{T}) where T
+    return res::Vector{T}
 end
 
 

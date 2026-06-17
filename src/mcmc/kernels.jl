@@ -237,7 +237,7 @@ end
 struct AutoStepRWMH <: AbstractAutoStep{Val{false}} end
 
 function involution(::AutoStepRWMH,θ,target,x,logp_x,z,Σ)
-	y = x + θ*unwhiten(L,z)
+	y = x + θ*unwhiten(Σ,z)
 	logp_y = LD.logdensity(target,y)
 	logα = if isnan(logp_y)
 		typemin(logp_x) 
@@ -322,14 +322,14 @@ function (k::FisherULA)(target,chain_state::GradientChainState,state)
 
 	x,logp_x,gradlogp_x = chain_state.x,chain_state.logp, chain_state.gradlogp
 
-	ϵ = sqrt(σ2/(sum(abs2,R)/length(x)))
+	ε = sqrt(σ2/(sum(abs2,R)/length(x)))
 
 	# Leapfrog integrator
 	velocity = randn(length(x))
-	velocity_middle  = velocity + ϵx/2*R'*gradlogp_x
-	y = x + ϵ * R*velocity_middle
+	velocity_middle  = velocity + ε/2*R'*gradlogp_x
+	y = x + ε * R*velocity_middle
 	logp_y,gradlogp_y = LD.logdensity_and_gradient(target,y)
-	velocity_end = -velocity_middle - ϵ/2*R'*gradlogp_y
+	velocity_end = -velocity_middle - ε/2*R'*gradlogp_y
 
 	α = if isnan(logp_y) || any(isnan,velocity_end)
 		zero(logp_x)
@@ -484,7 +484,7 @@ function (k::PathDelayedRejection)(target,chain_state::ChainState,C::PDMat)
 		y = x + unwhiten(C,us[i+1])
 		logps[i+1] =  LD.logdensity(target,y)
 
-		α = if isnan(logp_y)
+		α = if isnan(logps[i+1])
 			zero(logp_x)
 		else
 			min(1.,exp(_logα(
@@ -573,15 +573,16 @@ function (k::SliceSampling)(target,chain_state::ChainState,state)
 	while true
 		counter += 1
 		u = rand()
-		y = x + (L + u*(R-L))*d
+		Δ = L + u*(R-L)
+		y = x + Δ*d
 		logp_y = LD.logdensity(target,y)
 		if z < logp_y
 			return ChainState(y, logp_y), true, 1/counter, state
 		end
-		if u < 0
-			L = u
+		if Δ < 0
+			L = Δ
 		else
-			R = u
+			R = Δ
 		end
 	end
 end

@@ -37,7 +37,6 @@ function SMCState(seq::AbstractDistributionSequence,ref_logdensity,initial_sampl
                   states,zero(T),1.,zero(T),zero(T),false)
 end
 
-box = Ref{Any}()
 function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
 			 mcmc_kernel::AbstractMCMCKernel = RWMH(),
 			 metric_estimator::AbstractMetric = _default_metric_estimator(size(initial_samples)...),
@@ -290,8 +289,6 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 		)))
 
 		update_parameters!(ker_parameters,chains,Σg)
-
-		box[] = (trace,state,ker_parameters,chains,Σg, metric_estimate,chain_length)
 
 		ProgressMeter.next!(loop_prog,
 					  showvalues=[

@@ -29,7 +29,7 @@ function (k::DifferentialEvo)(target,chain_state::AbstractChainState,state)
 
 	inds = sample(1:size(particles,2),2,replace=false)
 
-	y =  x + scale*(particles[:,inds[1]] - particles[:,inds[2]]) + 1e-4*scale * randn(length(x))
+	y =  x + scale*(view(particles,:,inds[1]) - view(particles,:,inds[2])) + 1e-4*scale * randn(length(x))
 	logp_y = LD.logdensity(target,y)
 
 	α = if isnan(logp_y)

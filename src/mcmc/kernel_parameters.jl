@@ -2,7 +2,7 @@ abstract type AbstractKernelParameters end
 
 function get_parameters(::AbstractKernelParameters) end
 function update_parameters!(adpt::AbstractKernelParameters,chains,Σ) end
-function improved_acceptance!(adpt::AbstractKernelParameters) end
+function improve_acceptance!(adpt::AbstractKernelParameters) end
 
 struct ScaleAdaptation{T<:Real} <: AbstractKernelParameters 
 	w::Vector{T}
@@ -35,7 +35,7 @@ function update_parameters!(adpt::ScaleAdaptation,chains,Σ)
 
 	n = sum(adpt.w)
 	if iszero(n)
-		improved_acceptance!(adpt)
+		improve_acceptance!(adpt)
 		fill!(adpt.w,1/length(adpt.w))
 	else
 		adpt.w ./=  sum(adpt.w)
@@ -54,7 +54,7 @@ function update_parameters!(adpt::ScaleAdaptation,chains,Σ)
 	shuffle!(adpt.scales)
 end
 
-function improved_acceptance!(adpt)
+function improve_acceptance!(adpt)
 	for i in eachindex(adpt.scales)
 		adpt.scales[i] /= 10
 	end
@@ -73,7 +73,7 @@ function FixedScale(n::Int,dim::Int)
 end
 
 function update_parameters!(adpt::FixedScale,chains,Σ) end
-function improved_acceptance!(adpt::FixedScale) end
+function improve_acceptance!(adpt::FixedScale) end
 
 get_parameters(adpt::FixedScale) = Fill(adpt.scale,adpt.n)
 

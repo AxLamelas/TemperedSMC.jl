@@ -37,7 +37,7 @@ function SMCState(seq::AbstractDistributionSequence,ref_logdensity,initial_sampl
                   states,zero(T),1.,zero(T),zero(T),false)
 end
 
-function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
+function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::AbstractMatrix;
 			 mcmc_kernel::AbstractMCMCKernel = RWMH(),
 			 metric_estimator::AbstractMetric = _default_metric_estimator(size(initial_samples)...),
 			 ker_parameters::AbstractKernelParameters = ScaleAdaptation(reverse(size(initial_samples))...),
@@ -67,7 +67,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
 	while true
 		# `state` contains information regarding the previous step in the sequence
 		if store_trace
-			push!(trace,deepcopy(state))
+		push!(trace,deepcopy(state))
 		end
 
 		if callback(trace)
@@ -96,7 +96,10 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
 			v = resampler(state.W)
 			state.log_evidence += lw_norm_constant + lN
 			fill!(state.lw,0.)
-			fill!(state.W,1/n_samples)
+			# Weight cannot be reset here because the metric estimate is based on the weighted particles
+			# Moreover, it does not affect anything else because W is calculated from lw at each interation 
+			# and not accumulated
+			# fill!(state.W,1/n_samples)
 			state.resampled = true
 			v
 		else
@@ -109,7 +112,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
 		target = FullLogDensity(ref_logdensity,mul_logdensity)
 		starting_x = [state.samples[:,i] for i in indices]
 		metric_estimate = estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
-		chains = if adapt_mcmc_steps
+		chains,n_steps = if adapt_mcmc_steps
 
 			chains = map(starting_x,get_parameters(ker_parameters),metric_estimate) do x,p,Σ
 				chain_state = init_chain_state(mcmc_kernel,target,x)
@@ -142,12 +145,13 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
 				resize!(c.states,n_steps+1)
 				resize!(c.γ,n_steps)
 			end
-			chains
+			chains, n_steps
 		else
-			stabilized_map(collect(zip(starting_x,get_parameters(ker_parameters),metric_estimate)),map_func) do (x,p,Σ)
+			chains = stabilized_map(collect(zip(starting_x,get_parameters(ker_parameters),metric_estimate)),map_func) do (x,p,Σ)
 				kernel_state = init_kernel_state(mcmc_kernel,x,p,Σ)
-				mcmc_chain(mcmc_kernel,target,x,kernel_state,chain_length)
+				mcmc_chain(mcmc_kernel,target,x,kernel_state,mcmc_steps+1)
 			end
+			chains,mcmc_steps
 		end
 
 		# Update particle information
@@ -190,7 +194,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
 	return state
 end
 
-function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples;
+function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::AbstractMatrix;
 						mcmc_kernel::AbstractMCMCKernel = RWMH(),
 						metric_estimator::AbstractMetric = _default_metric_estimator(size(initial_samples)...),
 						resampler::AbstractResampler = ResidualResampler(),
@@ -251,10 +255,6 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 		starting_x = [state.samples[:,i] for i in indices]
 		metric_estimate = estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
 
-		for i in eachindex(ker_parameters.w)
-			println(ker_parameters.w[i]," ",ker_parameters.scales[i])
-		end
-
 		local chains
 
 		for _ in 1:10 # TODO: make this a parameter
@@ -296,6 +296,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 					  ("Resampled?",state.resampled),
 					  ("Log evidence",state.log_evidence),
 					  ("Acceptance rate",state.acceptance_rate),
+					  ("Kernel parameters",state.acceptance_rate)
 					  ])
 
 		if islast(seq,state.seq_state)

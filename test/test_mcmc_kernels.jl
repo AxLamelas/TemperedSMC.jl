@@ -18,7 +18,13 @@ function test_kernel_stationarity(kernel, kernel_name; atol_mean=0.1, atol_cov=0
     x0 = rand(prior_dist)
     lp0 = LD.logdensity(prior_ld, x0)
 
-    chain_state = TemperedSMC.ChainState(x0, lp0)
+    # Initialize state based on kernel's gradient requirement
+    chain_state = if TemperedSMC.usesgrad(kernel)
+        lp0, grad0 = LD.logdensity_and_gradient(prior_ld, x0)
+        TemperedSMC.GradientChainState(x0, lp0, grad0)
+    else
+        TemperedSMC.ChainState(x0, lp0)
+    end
     ker_state = TemperedSMC.init_kernel_state(kernel, x0, 1.0, PDMat(Σ_true))
 
     # Run MCMC chain

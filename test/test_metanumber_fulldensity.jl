@@ -18,8 +18,8 @@ LD = LogDensityProblems
     @test m1^2 == 9.0
 
     # Special values (zero and one return plain numbers, not MetaNumbers)
-    @test zero(typeof(m1)) == 0.0
-    @test one(typeof(m1)) == 1.0
+    @test zero(m1) == 0.0
+    @test one(m1) == 1.0
 
     # Comparisons with infinity
     @test !isinf(m1)

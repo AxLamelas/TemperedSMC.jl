@@ -147,20 +147,26 @@ function enforce_type(res::AbstractVector{T}) where T
 end
 
 
-# TODO: Switch to a different method after some size
-function ensure_posdef(M::Matrix{T}) where T <: Real
+function ensure_posdef(M::Matrix{T}; max_jitter_retries=10) where T <: Real
 	ε = sqrt(eps(T))
 	invε = inv(ε)
 	if !issymmetric(M)
 		M = (M + M')/2
 	end
-	F = eigen(Symmetric(M))
-	for i in eachindex(F.values)
-		F.values[i] = clamp(F.values[i],ε,invε)
-	end
 
-	# Symmetric must be used due to numerical precision
-	return Symmetric(Matrix(F))
+	# Try Cholesky first (fast path for well-conditioned matrices)
+	try
+		cholesky(Symmetric(M))
+		# If Cholesky succeeds, matrix is already PD
+		return Symmetric(M)
+	catch
+		# Fall back to eigenvalue approach for ill-conditioned matrices
+		F = eigen(Symmetric(M))
+		for i in eachindex(F.values)
+			F.values[i] = clamp(F.values[i], ε, invε)
+		end
+		return Symmetric(Matrix(F))
+	end
 end
 
 # As ensure_posdef often involves a matrix decomposition the
@@ -171,12 +177,25 @@ function ensure_posdef_and_invert(M::Matrix{T}) where T <: Real
 	if !issymmetric(M)
 		M = (M + M')/2
 	end
-	F = eigen(Symmetric(M))
-	for i in eachindex(F.values)
-		F.values[i] = clamp(1/F.values[i],ε,invε)
-	end
 
-	return Symmetric(F.vectors * Diagonal(F.values) * F.vectors')
+	# Try Cholesky first (fast path) — compute inverse via triangular solves
+	try
+		chol = cholesky(Symmetric(M))
+		# M = L * L', so M^(-1) = (L')^(-1) * L^(-1)
+		# Use triangular solves: I / L' / L for efficiency (avoids full matrix inversion)
+		d = size(M, 1)
+		L = chol.L
+		# Compute (L * L')^(-1) = (L')^(-1) * L^(-1) efficiently
+		Linv = inv(UpperTriangular(L'))
+		return Symmetric(Linv * Linv')
+	catch
+		# Fall back to eigenvalue approach for ill-conditioned matrices
+		F = eigen(Symmetric(M))
+		for i in eachindex(F.values)
+			F.values[i] = clamp(1/F.values[i], ε, invε)
+		end
+		return Symmetric(F.vectors * Diagonal(F.values) * F.vectors')
+	end
 end
 
 

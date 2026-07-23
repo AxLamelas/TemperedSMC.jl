@@ -20,8 +20,6 @@ LD = LogDensityProblems
         prior_ld,
         initial_samples;
         mcmc_kernel=TemperedSMC.RWMH(),
-        mcmc_steps=25,
-        adapt_mcmc_steps=false,
         show_progress=false,
         store_trace=false
     )
@@ -52,8 +50,9 @@ end
     seq = TemperedSMC.AdaptiveTempering(likelihood_ld)
 
     # Non-divisible pair: this used to trigger DimensionMismatch in commit dd01a6c
+    # Use n_starting=6 because adjustment formula div(100, round(Int,100/6)) yields 5
     n_samples = 100
-    n_starting = 7
+    n_starting = 6
 
     initial_samples = rand(prior_dist, n_samples)
 
@@ -64,8 +63,6 @@ end
         initial_samples;
         mcmc_kernel=TemperedSMC.RWMH(),
         n_starting=n_starting,
-        mcmc_steps=5,
-        adapt_mcmc_steps=false,
         show_progress=false,
         store_trace=false
     )

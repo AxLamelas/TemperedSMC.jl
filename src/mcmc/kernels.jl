@@ -35,11 +35,11 @@ function (k::DifferentialEvo)(target,chain_state::AbstractChainState,state)
 	y,logq_ratio = if rand() < p_snooker
 		z,r1,r2 = sample(1:n_particles,3,replace=false)
 
-		line = x .- z
+		line = x .- @view(particles[:,z])
 		line_norm2 = dot(line,line)
 		if line_norm2 < 1e-12
 			# z essentially coincides with x -> direction undefined, fall back
-			return x .+ b .* randn(d), 0.0
+			return ChainState(x .+ b .* randn(d), logp_x), false, zero(logp_x), state
 		end
 		diff       = @view(particles[:, r1]) .- @view(particles[:, r2])
 		proj_coef  = dot(diff, line) / line_norm2
@@ -49,7 +49,7 @@ function (k::DifferentialEvo)(target,chain_state::AbstractChainState,state)
 
 		# Jacobian correction for the non-symmetric snooker move
 		# (ter Braak & Vrugt, 2008): factor (||x*-z|| / ||x-z||)^(d-1)
-		dist_prop  = norm(prop .- z)
+		dist_prop  = norm(prop .- @view(particles[:,z]))
 		dist_cur   = norm(line)
 		prop, (d - 1) * (log(dist_prop) - log(dist_cur))
 	else
@@ -202,7 +202,7 @@ function (ker::AbstractAutoStep{Val{true}})(target,chain_state::GradientChainSta
 		return GradientChainState(y, logp_y, gradlogp_y),true, α*(1-N/(2max_iters(ker))), state
 	end
 
-	return GradientChainState(x, logp_x, gradlogp_x), false, α*(1-N/(2max_iters(ker))), state
+	return GradientChainState(x, logp_x, gradlogp_y), false, α*(1-N/(2max_iters(ker))), state
 end
 
 function (ker::AbstractAutoStep{Val{false}})(target,chain_state::ChainState,state)
@@ -449,11 +449,11 @@ function (k::ULA)(target,chain_state::GradientChainState,state)
 			 logp_x + 0.5 * sum(abs2,velocity)))
 	end
 
-	if rand() < α
-		return GradientChainState(y, logp_y, gradlogp_y), true, α, state
+	if isinf(logp_y)
+		return GradientChainState(x, logp_x, gradlogp_x), false, α, state
 	end
 
-	return GradientChainState(x, logp_x, gradlogp_x), false, α, state
+	return GradientChainState(y, logp_y, gradlogp_y), true, α, state
 end
 
 Base.@kwdef @concrete struct PathDelayedRejection <: AbstractMCMCKernel{Val{false}}
@@ -544,9 +544,6 @@ function (k::RWMH)(target,chain_state::ChainState,C::PDMat)
 		zero(logp_x)
 	else
 		min(1.,exp.(logp_y + sum(logpdf(proposal_dist,-u)) - logp_x - sum(logpdf(proposal_dist,u))))
-	end
-	if isnan(α)
-		throw(error("$(x)\n$(logp_x)\n$(y)\n$(logp_y)"))
 	end
 	if rand() < α
 		return ChainState(y, logp_y), true, α, C

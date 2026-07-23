@@ -45,23 +45,25 @@ LD.dimension(ℓ::FullLogDensity) = ℓ.dim
 LD.capabilities(::Type{<:FullLogDensity}) = LD.LogDensityOrder{1}()
 
 function LD.logdensity(ℓ::FullLogDensity,θ)
-	ref = LD.logdensity(ℓ.ref,θ)
-	mul = if ref == -Inf
-		oftype(ref, -Inf)             
-	else
-		LD.logdensity(ℓ.mul, θ)        
-	end
-	MetaNumber(mul + ref,(;mul,ref))
+  ref = LD.logdensity(ℓ.ref,θ)
+  mul = if ref == -Inf
+    # Coupled to TemperedLogDensity's (;logdensity) field shape; keep in sync if that changes
+    MetaNumber(oftype(ref,-Inf), (;logdensity=oftype(ref,-Inf)))
+  else
+    LD.logdensity(ℓ.mul, θ)
+  end
+  MetaNumber(mul + ref,(;mul,ref))
 end
 
 function LD.logdensity_and_gradient(ℓ::FullLogDensity,θ)
-	ref,refgrad = LD.logdensity_and_gradient(ℓ.ref,θ)
-	mul,mulgrad = if ref == -Inf
-		oftype(ref,-Inf), -refgrad
-	else
-		LD.logdensity_and_gradient(ℓ.mul,θ)
-	end
-	MetaNumber(mul + ref,(;mul,mulgrad,ref,refgrad)), mulgrad + refgrad
+  ref,refgrad = LD.logdensity_and_gradient(ℓ.ref,θ)
+  mul,mulgrad = if ref == -Inf
+    # Coupled to TemperedLogDensity's (;logdensity,logdensity_grad) field shape; keep in sync if that changes
+    MetaNumber(oftype(ref,-Inf), (;logdensity=oftype(ref,-Inf), logdensity_grad=-refgrad)), -refgrad
+  else
+    LD.logdensity_and_gradient(ℓ.mul,θ)
+  end
+  MetaNumber(mul + ref,(;mul,mulgrad,ref,refgrad)), mulgrad + refgrad
 end
 
 struct ConditionedLogDensity{L,T}

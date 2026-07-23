@@ -199,7 +199,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 						metric_estimator::AbstractMetric = _default_metric_estimator(size(initial_samples)...),
 						resampler::AbstractResampler = ResidualResampler(),
 						n_starting = max(2,round(Int,cbrt(size(initial_samples,2)))),
-						ker_parameters::AbstractKernelParameters = ScaleAdaptation(n_starting,LD.dimension(ref_logdensity)),
+						ker_parameters::AbstractKernelParameters = nothing,
 						map_func = map,
 						callback=(_) -> false,
 						store_trace = true,
@@ -214,6 +214,10 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 		n_starting = div(n_samples,round(Int,n_samples/n_starting))
 	end
 	chain_length = div(n_samples, n_starting)
+
+	if ker_parameters === nothing
+		ker_parameters = ScaleAdaptation(n_starting,LD.dimension(ref_logdensity))
+	end
 
 	loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 

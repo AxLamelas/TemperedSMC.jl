@@ -27,15 +27,42 @@ function (k::DifferentialEvo)(target,chain_state::AbstractChainState,state)
 
 	x,logp_x = chain_state.x,chain_state.logp
 
-	inds = sample(1:size(particles,2),2,replace=false)
+	p_snooker = 0.1
+	scale_snooker = rand() + 1.2
+	b = 1e-4*scale
 
-	y =  x + scale*(view(particles,:,inds[1]) - view(particles,:,inds[2])) + 1e-4*scale * randn(length(x))
+	d,n_particles = size(particles)
+	y,logq_ratio = if rand() < p_snooker
+		z,r1,r2 = sample(1:n_particles,3,replace=false)
+
+		line = x .- @view(particles[:,z])
+		line_norm2 = dot(line,line)
+		if line_norm2 < 1e-12
+			# z essentially coincides with x -> direction undefined, fall back
+			return ChainState(x .+ b .* randn(d), logp_x), false, zero(logp_x), state
+		end
+		diff       = @view(particles[:, r1]) .- @view(particles[:, r2])
+		proj_coef  = dot(diff, line) / line_norm2
+		projected  = proj_coef .* line
+		noise      = b .* randn(d)
+		prop       = x .+ scale_snooker .* projected .+ noise
+
+		# Jacobian correction for the non-symmetric snooker move
+		# (ter Braak & Vrugt, 2008): factor (||x*-z|| / ||x-z||)^(d-1)
+		dist_prop  = norm(prop .- @view(particles[:,z]))
+		dist_cur   = norm(line)
+		prop, (d - 1) * (log(dist_prop) - log(dist_cur))
+	else
+		r1,r2 = sample(1:size(particles,2),2,replace=false)
+		x .+ scale*(view(particles,:,r1) - view(particles,:,r2)) .+ b * randn(d), zero(logp_x)
+	end
+
 	logp_y = LD.logdensity(target,y)
 
 	α = if isnan(logp_y)
 		zero(logp_x)
 	else
-		min(one(logp_x),exp(logp_y - logp_x))
+		min(one(logp_x),exp(logp_y - logp_x + logq_ratio))
 	end
 
 	if rand() < α

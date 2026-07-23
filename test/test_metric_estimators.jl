@@ -20,6 +20,31 @@ include("test_utils.jl")
     @test diag(Matrix(Σ_est_list[1])) ≈ ones(dim) atol=1e-10
 end
 
+@testset "FixedMetric" begin
+    Random.seed!(69)
+
+    dim = 2
+    # Create an arbitrary positive definite matrix
+    A = randn(dim, dim)
+    Σ_fixed = A * A' + I(dim)
+    metric = TemperedSMC.FixedMetric(Σ_fixed)
+
+    # Generate arbitrary samples and weights (should be ignored by FixedMetric)
+    samples = randn(dim, 100)
+    weights = ones(100) / 100
+
+    # Request metrics for multiple particles
+    n_particles = 5
+    xs = [randn(dim) for _ in 1:n_particles]
+    Σ_est_list = TemperedSMC.estimate_metric(metric, samples, weights, [], xs)
+
+    # FixedMetric should return the same matrix for every particle
+    @test length(Σ_est_list) == n_particles
+    for i in 1:n_particles
+        @test Matrix(Σ_est_list[i]) ≈ Σ_fixed atol=1e-14
+    end
+end
+
 @testset "ParticleCov vs true covariance" begin
     Random.seed!(71)
 

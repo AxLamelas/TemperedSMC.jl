@@ -4,7 +4,15 @@ function estimate_metric(_::AbstractMetric,samples,weights,states,xs) end
 
 struct IdentityMetric <: AbstractMetric end
 
-estimate_metric(_::IdentityMetric,samples,weights,_,xs) = fill(PDMat(Diagonal(ones(eltype(samples),size(samples,1)))),length(xs))
+estimate_metric(_::IdentityMetric,samples,weights,_,xs) = Fill(PDMat(Diagonal(ones(eltype(samples),size(samples,1)))),length(xs))
+
+struct FixedMetric{T <: PDMat} <: AbstractMetric
+	M::T
+end
+
+FixedMetric(M::AbstractMatrix) = FixedMetric(PDMat(M))
+
+estimate_metric(m::FixedMetric,samples,weights,_,xs) = Fill(m.M,length(xs))
 
 struct ParticleCov <: AbstractMetric end
 

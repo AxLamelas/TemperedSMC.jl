@@ -299,8 +299,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 					  progress_info(state.seq_state)...,
 					  ("Resampled?",state.resampled),
 					  ("Log evidence",state.log_evidence),
-					  ("Acceptance rate",state.acceptance_rate),
-					  ("Kernel parameters",state.acceptance_rate)
+					  ("Acceptance rate",state.acceptance_rate)
 					  ])
 
 		if islast(seq,state.seq_state)

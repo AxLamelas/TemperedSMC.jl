@@ -199,7 +199,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 						metric_estimator::AbstractMetric = _default_metric_estimator(size(initial_samples)...),
 						resampler::AbstractResampler = ResidualResampler(),
 						n_starting = max(2,round(Int,cbrt(size(initial_samples,2)))),
-						ker_parameters::AbstractKernelParameters = nothing,
+						ker_parameters::Union{AbstractKernelParameters,Nothing} = nothing,
 						map_func = map,
 						callback=(_) -> false,
 						store_trace = true,

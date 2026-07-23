@@ -37,9 +37,9 @@ end
     # True covariance
     Σ_true = cov(prior_dist)
 
-    # Monte Carlo error at n=2000 is roughly sqrt(tr(Σ_true^2) / n) in Frobenius norm
+    # Monte Carlo error: E[‖S-Σ‖_F²] = (tr(Σ)² + tr(Σ²))/n (Frobenius norm)
     # Allow ±2σ for sampling variability
-    error_bound = 2.0 * sqrt(tr(Σ_true^2) / n_samples)
+    error_bound = 2.0 * sqrt((tr(Σ_true)^2 + tr(Σ_true^2)) / n_samples)
     @test norm(Σ_est - Σ_true) ≤ error_bound
 end
 
@@ -87,7 +87,10 @@ end
     # True covariance
     Σ_true = cov(prior_dist)
 
-    # Statistical tolerance
-    error_bound = 2.0 * sqrt(tr(Σ_true^2) / n_samples)
-    @test norm(Σ_est - Σ_true) ≤ error_bound
+    # ParticleVar is diagonal-only by design; compare only the diagonals
+    # (off-diagonal estimation bias is expected and does not reflect on estimation quality)
+    diag_est = diag(Σ_est)
+    diag_true = diag(Σ_true)
+    error_bound = 2.0 * sqrt(sum(diag_true.^2) / n_samples)
+    @test norm(diag_est - diag_true) ≤ error_bound
 end

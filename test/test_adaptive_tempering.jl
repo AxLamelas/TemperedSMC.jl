@@ -26,11 +26,12 @@ end
 
     # Compute log-densities at β=0 (reference only) and at various β values
     prior_ld, likelihood_ld, _ = get_test_problem()
-    log_ref = [LD.logdensity(prior_ld, samples[:, i]) for i in 1:n_particles]
+    log_lik_ref = [LD.logdensity(likelihood_ld, samples[:, i]) for i in 1:n_particles]
 
     # Create a state object as it would appear in the algorithm
-    # TemperedState(ℓ, β) where ℓ is log density and β is temperature vector
-    state = TemperedSMC.TemperedState(copy(log_ref), [0.0])
+    # TemperedState(ℓ, β) where ℓ is the *likelihood* log density and β is temperature vector
+    # Note: state.ℓ must hold the incremental/multiplying density, not the prior
+    state = TemperedSMC.TemperedState(copy(log_lik_ref), [0.0])
 
     # Compute likelihood increments for a range of β
     function compute_loglik_increments(β)

@@ -68,7 +68,7 @@ end
     )
 
     # Verify output structure is correct
-    @test size(result.samples, 1) == TemperedSMC.LD.dimension(prior)
+    @test size(result.samples, 1) == TemperedSMC.LD.dimension(prior_ld)
     @test size(result.samples, 2) == n_samples
 
     # No stale/untouched columns (would manifest as NaN or all zeros)

@@ -67,7 +67,9 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 	while true
 		# `state` contains information regarding the previous step in the sequence
 		if store_trace
-		push!(trace,deepcopy(state))
+			push!(trace, SMCState(copy(state.seq_state), copy(state.samples), copy(state.W),
+								  copy(state.lw), copy(state.states), state.log_evidence,
+								  state.acceptance_rate, state.trcov_reweight, state.trcov_mcmc, state.resampled))
 		end
 
 		if callback(trace)
@@ -87,8 +89,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 			state.samples,FrequencyWeights(state.W),2
 		)))
 
-
-		state.trcov_reweight = sum(var(state.samples,FrequencyWeights(state.W),2))
+		state.trcov_reweight = tr(Σg)
 
 		# Evidence estimate and resample
 		ess = 1/sum(abs2,state.W)
@@ -97,7 +98,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 			state.log_evidence += lw_norm_constant + lN
 			fill!(state.lw,0.)
 			# Weight cannot be reset here because the metric estimate is based on the weighted particles
-			# Moreover, it does not affect anything else because W is calculated from lw at each interation 
+			# Moreover, it does not affect anything else because W is calculated from lw at each interation
 			# and not accumulated
 			# fill!(state.W,1/n_samples)
 			state.resampled = true
@@ -111,7 +112,11 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 		# Propagate
 		target = FullLogDensity(ref_logdensity,mul_logdensity)
 		starting_x = [state.samples[:,i] for i in indices]
-		metric_estimate = estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
+		metric_estimate = if metric_estimator isa ParticleCov
+			Fill(Σg, length(starting_x))
+		else
+			estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
+		end
 		chains,n_steps = if adapt_mcmc_steps
 
 			chains = map(starting_x,get_parameters(ker_parameters),metric_estimate) do x,p,Σ
@@ -163,10 +168,10 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 		Σg = PDMat(ensure_posdef(cov(
 			state.samples,FrequencyWeights(state.W),2
 		)))
-		
+
 		update_parameters!(ker_parameters,chains,Σg)
 
-		state.trcov_mcmc = sum(var(state.samples,FrequencyWeights(state.W),2))
+		state.trcov_mcmc = tr(Σg)
 
 		# Average acceptance rate of the chains
 		state.acceptance_rate = sum(c.n_accepts for c in chains) / (n_steps*n_samples)
@@ -230,7 +235,9 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 	while true
 		# `state` contains information regarding the previous step in the sequence
 		if store_trace
-			push!(trace,deepcopy(state))
+			push!(trace, SMCState(copy(state.seq_state), copy(state.samples), copy(state.W),
+								  copy(state.lw), copy(state.states), state.log_evidence,
+								  state.acceptance_rate, state.trcov_reweight, state.trcov_mcmc, state.resampled))
 		end
 
 		if callback(trace)

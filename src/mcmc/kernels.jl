@@ -312,12 +312,18 @@ function (k::FisherMALA)(target,chain_state::GradientChainState,state)
 		ϕ = R'*s_R
 		n = λ + ϕ'*ϕ
 		r = 1/(1+sqrt(λ/n))
-		1/sqrt(λ) * (R - r/n * (R*ϕ)*ϕ')
+		w = R*ϕ
+		R_new = 1/sqrt(λ) * copy(R)
+		BLAS.ger!(-r/n, w, ϕ, R_new)
+		R_new
 	else
 		ϕ = R'*s_R
 		n = 1 + ϕ'*ϕ
 		r = 1/(1+sqrt(1/n))
-		R - r/n * (R*ϕ)*ϕ'
+		w = R*ϕ
+		R_new = copy(R)
+		BLAS.ger!(-r/n, w, ϕ, R_new)
+		R_new
 	end
 
 	# From 10.1007/s11222-008-9110-y
@@ -371,12 +377,16 @@ function (k::FisherULA)(target,chain_state::GradientChainState,state)
 		ϕ = R'*s
 		n = λ + ϕ'*ϕ
 		r = 1/(1+sqrt(λ/n))
-		nextR = 1/sqrt(λ) * (R - r/n * (R*ϕ)*ϕ')
+		w = R*ϕ
+		nextR = 1/sqrt(λ) * copy(R)
+		BLAS.ger!(-r/n, w, ϕ, nextR)
 	else
 		ϕ = R'*s
 		n = 1 + ϕ'*ϕ
 		r = 1/(1+sqrt(1/n))
-		nextR = R - r/n * (R*ϕ)*ϕ'
+		w = R*ϕ
+		nextR = copy(R)
+		BLAS.ger!(-r/n, w, ϕ, nextR)
 	end
 
 	# From 10.1007/s11222-008-9110-y

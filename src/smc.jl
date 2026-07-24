@@ -48,7 +48,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 			 adapt_stability=0.01,
 			 map_func = map,
 			 callback=(_) -> false,
-			 store_trace = true,
+			 store_trace = false,
 			 show_progress = true
 			 )
 
@@ -207,7 +207,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 						ker_parameters::Union{AbstractKernelParameters,Nothing} = nothing,
 						map_func = map,
 						callback=(_) -> false,
-						store_trace = true,
+						store_trace = false,
 						show_progress = true
 						)
 

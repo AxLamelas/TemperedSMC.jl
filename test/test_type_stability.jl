@@ -1,4 +1,4 @@
-using Test, Random, TemperedSMC, Distributions, LinearAlgebra, Statistics, LogDensityProblems
+using Test, Random, TemperedSMC, Distributions, LinearAlgebra, Statistics, LogDensityProblems, PDMats
 using BenchmarkTools
 
 include("test_utils.jl")
@@ -19,7 +19,7 @@ LD = LogDensityProblems
     # Single kernel step allocation check: RWMH (baseline for later comparison)
     begin
         chain_state = TemperedSMC.ChainState(initial_samples[:,1], 0.0)
-        Σ = Diagonal(ones(2))
+        Σ = PDMat(Diagonal(ones(2)))
         ker_state = TemperedSMC.init_kernel_state(TemperedSMC.RWMH(), initial_samples[:,1], 1.0, Σ)
 
         # Warm up
@@ -37,8 +37,8 @@ LD = LogDensityProblems
         target = prior_ld  # MALA needs gradients
         x = initial_samples[:,1]
         lp, gradlp = LD.logdensity_and_gradient(target, x)
-        chain_state = TemperedSMC.GradientChainState(x, gradlp, lp)
-        Σ = Diagonal(ones(2))
+        chain_state = TemperedSMC.GradientChainState(x, lp, gradlp)
+        Σ = PDMat(Diagonal(ones(2)))
         ker_state = TemperedSMC.init_kernel_state(TemperedSMC.MALA(), x, 1.0, Σ)
 
         _ = TemperedSMC.MALA()(target, chain_state, ker_state)
@@ -50,15 +50,16 @@ LD = LogDensityProblems
     begin
         samples = initial_samples
         W = ones(n_samples) / n_samples
+        xs = [randn(2) for _ in 1:n_samples]  # Dummy starting positions for metric estimators
 
         # IdentityMetric
-        _ = TemperedSMC.estimate_metric(TemperedSMC.IdentityMetric(), samples, W, 1.0)
-        alloc = @allocated TemperedSMC.estimate_metric(TemperedSMC.IdentityMetric(), samples, W, 1.0)
+        _ = TemperedSMC.estimate_metric(TemperedSMC.IdentityMetric(), samples, W, [], xs)
+        alloc = @allocated TemperedSMC.estimate_metric(TemperedSMC.IdentityMetric(), samples, W, [], xs)
         @test alloc >= 0
 
         # ParticleCov
-        _ = TemperedSMC.estimate_metric(TemperedSMC.ParticleCov(), samples, W, 1.0)
-        alloc = @allocated TemperedSMC.estimate_metric(TemperedSMC.ParticleCov(), samples, W, 1.0)
+        _ = TemperedSMC.estimate_metric(TemperedSMC.ParticleCov(), samples, W, [], xs)
+        alloc = @allocated TemperedSMC.estimate_metric(TemperedSMC.ParticleCov(), samples, W, [], xs)
         @test alloc >= 0
     end
 end

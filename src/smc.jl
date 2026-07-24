@@ -12,29 +12,29 @@ mutable struct SMCState{T,S<:AbstractSequenceState{T},C}
   # MCMCM chain states
   states::Vector{C}
   log_evidence::T
-  acceptance_rate::Float64
+  acceptance_rate::T
   trcov_reweight::T
   trcov_mcmc::T
   resampled::Bool
 end
 
 function SMCState(seq::AbstractDistributionSequence,ref_logdensity,initial_samples,mcmc_kernel,map_func)
-  mul_logdensity = initial_logdensity(seq)
+  T = eltype(initial_samples)
+  mul_logdensity = initial_logdensity(seq, T)
   target = FullLogDensity(ref_logdensity,mul_logdensity)
   states = stabilized_map(eachcol(initial_samples),map_func) do s
     init_chain_state(mcmc_kernel,target,s)
   end
 
   seq_state = init_sequence_state(seq,(s.logp.info.mul for s in states))
-  T = eltype(seq_state)
-  lw = [convert(T,s.logp.info.mul) for s in states] # Could possibly be a metanumber 
+  lw = [convert(T,s.logp.info.mul) for s in states] # Could possibly be a metanumber
   lw_norm_constant = logsumexp(lw)
   W = exp.(lw .- lw_norm_constant)
 
   n_samples = length(states)
 
   return SMCState(seq_state,deepcopy(initial_samples),W,lw,
-                  states,zero(T),1.,zero(T),zero(T),false)
+                  states,zero(T),one(T),zero(T),zero(T),false)
 end
 
 function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::AbstractMatrix;
@@ -128,7 +128,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 				(;n_accepts=0,states=chain,kernel_state,γ)
 			end
 			n_steps = 0
-			prev_msjd = 0.
+			prev_msjd = zero(T)
 			while true # Apply kernel until msjd stabilizes
 				chains = let i =n_steps + 1
 					stabilized_map(chains,map_func) do c
@@ -174,7 +174,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 		state.trcov_mcmc = tr(Σg)
 
 		# Average acceptance rate of the chains
-		state.acceptance_rate = sum(c.n_accepts for c in chains) / (n_steps*n_samples)
+		state.acceptance_rate = T(sum(c.n_accepts for c in chains)) / T(n_steps*n_samples)
 
 		ProgressMeter.next!(loop_prog,
 					  showvalues=[
@@ -274,7 +274,8 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 				mcmc_chain(mcmc_kernel,target,x,kernel_state,chain_length)
 			end
 			# Average acceptance rate of the chains
-			state.acceptance_rate = sum(c.n_accepts for c in chains) / ((chain_length-1)*n_starting)
+			T = eltype(state.samples)
+			state.acceptance_rate = T(sum(c.n_accepts for c in chains)) / T((chain_length-1)*n_starting)
 
 			if !iszero(state.acceptance_rate)
 				break

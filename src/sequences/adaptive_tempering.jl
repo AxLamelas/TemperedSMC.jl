@@ -2,12 +2,12 @@ struct TemperedState{T} <: AbstractSequenceState{T}
 	# Mul log density
 	ℓ::Vector{T}
 	# Temperature
-	β::Vector{Float64}
+	β::Vector{T}
 end
 
 function TemperedState(log_density)
 	ℓ = [v.info.logdensity for v in log_density]
-	return TemperedState(ℓ,[0.])
+	return TemperedState(ℓ,[zero(eltype(ℓ))])
 end
 
 Base.eltype(::TemperedState{T}) where T = T
@@ -16,9 +16,9 @@ function progress_info(state::TemperedState)
 	[("β",last(state.β)),("Maximum ℓ",maximum(state.ℓ))]
 end
 
-struct TemperedLogDensity{D}
+struct TemperedLogDensity{D,T}
 	den::D
-	β::Float64
+	β::T
 	dim::Int
 end
 
@@ -87,8 +87,8 @@ end
 
 init_sequence_state(seq::AdaptiveTempering,ℓ) = TemperedState(ℓ)
 
-function initial_logdensity(seq::AdaptiveTempering)
-	return TemperedLogDensity(seq.ℓ,0.)
+function initial_logdensity(seq::AdaptiveTempering, ::Type{T}=Float64) where T
+	return TemperedLogDensity(seq.ℓ,zero(T))
 end
 
 function next_logdensity!(seq::AdaptiveTempering,state::TemperedState,lw,prev_logdenisity)
@@ -96,8 +96,9 @@ function next_logdensity!(seq::AdaptiveTempering,state::TemperedState,lw,prev_lo
 		state.ℓ[i] = v.info.logdensity
 	end
 
+	T = eltype(state.β)
 	βp = last(state.β)
-	β = min(1., βp+ min(0.2,_next_β(state,lw,seq.α)-βp)) # Max Δβ as a safety net
+	β = min(one(T), βp + min(T(0.2), _next_β(state,lw,seq.α)-βp)) # Max Δβ as a safety net
 	push!(state.β,β)
 	return TemperedLogDensity(seq.ℓ,β)
 end
@@ -127,8 +128,8 @@ end
 
 init_sequence_state(_::KLAdaptiveTempering,ℓ) = TemperedState(ℓ)
 
-function initial_logdensity(seq::KLAdaptiveTempering)
-	return TemperedLogDensity(seq.ℓ,0.)
+function initial_logdensity(seq::KLAdaptiveTempering, ::Type{T}=Float64) where T
+	return TemperedLogDensity(seq.ℓ,zero(T))
 end
 
 function next_logdensity!(seq::KLAdaptiveTempering,state::TemperedState,lw,prev_logdenisity)
@@ -136,12 +137,13 @@ function next_logdensity!(seq::KLAdaptiveTempering,state::TemperedState,lw,prev_
 		state.ℓ[i] = v.info.logdensity
 	end
 
+	T = eltype(state.β)
 	βp = last(state.β)
 	nw = logsumexp(lw)
 	W = exp.(lw .- nw)
 	var_ℓ = var(state.ℓ,Weights(W))
 
-	β = min(1., βp+ min(0.2,sqrt(2seq.δ/var_ℓ))) # Max Δβ as a safety net
+	β = min(one(T), βp + min(T(0.2), sqrt(T(2)*seq.δ/var_ℓ))) # Max Δβ as a safety net
 	push!(state.β,β)
 	return TemperedLogDensity(seq.ℓ,β)
 end

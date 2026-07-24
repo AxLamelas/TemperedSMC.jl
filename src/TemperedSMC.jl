@@ -32,12 +32,4 @@ include("smc.jl")
 # Adaptive scheduler using conditional cess from
 # "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
 
-# TODO: Consider adding a AbstractKernelAdapt structure that goes as first argument into the 
-# adaptativity methods to allow the specification of different strategies for the same kernel
-# TODO: Implement IBIS
-# TODO: Maybe move factorized_logdensiy interface to another package
-
-# TODO: Consider changing the state and gradeints to expect named tuples
-# Then the Tuple handling for the Gibbs we be already permited
-
 end # module TemperedSMC

@@ -1,5 +1,3 @@
-# TODO: consider removing samples from SMCState as just using the chain state
-
 mutable struct SMCState{T,S<:AbstractSequenceState{T},C}
   # Log Density sequence
   seq_state::S
@@ -268,7 +266,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 
 		local chains
 
-		for _ in 1:10 # TODO: make this a parameter
+		for _ in 1:10 # TODO: generalize this
 			chains = stabilized_map(collect(zip(starting_x,get_parameters(ker_parameters),metric_estimate)),map_func) do (x,p,Σ)
 				kernel_state = init_kernel_state(mcmc_kernel,x,p,Σ)
 				mcmc_chain(mcmc_kernel,target,x,kernel_state,chain_length)

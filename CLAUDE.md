@@ -11,6 +11,7 @@ TemperedSMC.jl is a Julia package implementing Sequential Monte Carlo (SMC) algo
 - **Tempering sequences**: Automatic temperature scheduling using conditional effective sample size (CESS)
 
 The package is primarily a research implementation for PhD work, focusing on sampling from complex target distributions and Bayesian model comparison.
+No need to make pull request as this is solo work. Merge directly into main.
 
 ## Core Architecture
 
@@ -91,20 +92,40 @@ using TemperedSMC, Distributions, LogDensityProblems
 
 ## Key Design Decisions & TODOs
 
-### Current TODOs in Code
+### Current TODOs 
 
 1. **Remove samples from SMCState** (`src/smc.jl:1`)
    - Samples are redundant with chain states; consider consolidating
 
-2. **AbstractKernelAdapt interface** (`src/TemperedSMC.jl:35-36`)
-   - Decouple adaptation strategy from kernel type
-   - Allows the same kernel (e.g., MALA) to use different adaptation approaches (delayed rejection vs. auto-scaling vs. both)
+2. **Add timmings to the state and return information**
 
-3. **Named tuples for state/gradients** (`src/TemperedSMC.jl:40-41`)
-   - Currently uses vectors; named tuples would enable more flexible state representations and Gibbs sampling
+3. **Add benchmark of the cost of the implementation per logdensity call**
 
-4. **Implement IBIS** (`src/TemperedSMC.jl:37`)
+4. **Design and implement factorized logdensity interface**
+    - method to get all logdensity
+    - method to get one log density value
+    - method to get multiply, specified logdensity values
+    - implement mutating version of the methods that return vectors
+
+5. **Design and implement Population-based kernels**
+    - Add abstract subtypes of `AbstractMCMCKernel` for individual and population based kernels
+    - Make a common interface so that they can be used seemly within smc and waste_free_smc
+
+6. **Design and implement collective and individual implementations of Gibbs**
+
+7. **Generalize the ad hoc handling of 0 acceptance rate**
+
+7. **Design and Implement adaptive steps**
+    - Compare current implementation with WFSMC paper and the Particles.py implementation
+    - Design it to be compatible with smc and waste_free_smc
+
+8. **Implement IBIS** (`src/TemperedSMC.jl:37`)
    - Importance-Batch-Importance-Sampling for sequential inference without tempering
+
+9. **Implement Stein variational gradient descent as a collective kernel**
+
+10. **Look into transport maps**
+    - eg normalizing flows 
 
 ### Historical Context
 

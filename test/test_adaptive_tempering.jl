@@ -4,12 +4,12 @@ include("test_utils.jl")
 
 LD = LogDensityProblems
 
-function compute_cess(lw::Vector, α::Float64)
-    w = exp.(lw .- maximum(lw))
-    w ./= sum(w)
-    ess = 1.0 / sum(w .^ 2)
-    ness = ess / length(lw)
-    return ness
+function compute_cess_algorithm(lw::Vector, state::TemperedSMC.TemperedState, β_curr::Float64, β_new::Float64)
+    lΔw = similar(lw)
+    nw = TemperedSMC.logsumexp(lw)
+    lΔw .= (β_new - β_curr) .* state.ℓ
+    return exp(2 * TemperedSMC.logsumexp(lw[i]-nw + lΔw[i] for i in eachindex(lΔw)) -
+               TemperedSMC.logsumexp(lw[i]-nw + 2*lΔw[i] for i in eachindex(lΔw)))
 end
 
 @testset "AdaptiveTempering CESS bisection convergence" begin
@@ -49,9 +49,8 @@ end
     @test !isnan(β_next)
     @test !isinf(β_next)
 
-    # Verify the returned β satisfies the CESS condition
-    log_lik_full = compute_loglik_increments(β_next)
-    cess_achieved = compute_cess(log_lik_full, α)
+    # Verify the returned β satisfies the CESS condition using the algorithm's formula
+    cess_achieved = compute_cess_algorithm(lw, state, state.β[end], β_next)
     @test abs(cess_achieved - α) ≤ 1e-7
 end
 

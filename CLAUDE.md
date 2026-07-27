@@ -94,26 +94,23 @@ using TemperedSMC, Distributions, LogDensityProblems
 
 ### Current TODOs 
 
-1. **Remove samples from SMCState** (`src/smc.jl:1`)
-   - Samples are redundant with chain states; consider consolidating
+1. **Add timmings to the state of smc and waste_free_smc and return the information**
 
-2. **Add timmings to the state and return information**
+2. **Add benchmark of the cost of the implementation per logdensity call**
 
-3. **Add benchmark of the cost of the implementation per logdensity call**
-
-4. **Design and implement factorized logdensity interface**
+3. **Design and implement factorized logdensity interface**
     - method to get all logdensity
     - method to get one log density value
     - method to get multiply, specified logdensity values
     - implement mutating version of the methods that return vectors
 
-5. **Design and implement Population-based kernels**
+4. **Design and implement Population-based kernels**
     - Add abstract subtypes of `AbstractMCMCKernel` for individual and population based kernels
     - Make a common interface so that they can be used seemly within smc and waste_free_smc
 
-6. **Design and implement collective and individual implementations of Gibbs**
+5. **Design and implement collective and individual implementations of Gibbs**
 
-7. **Generalize the ad hoc handling of 0 acceptance rate**
+6. **Generalize the ad hoc handling of 0 acceptance rate**
 
 7. **Design and Implement adaptive steps**
     - Compare current implementation with WFSMC paper and the Particles.py implementation
@@ -126,6 +123,9 @@ using TemperedSMC, Distributions, LogDensityProblems
 
 10. **Look into transport maps**
     - eg normalizing flows 
+
+11. **Remove samples from SMCState** (`src/smc.jl:1`)
+   - Samples are redundant with chain states; consider consolidating
 
 ### Historical Context
 

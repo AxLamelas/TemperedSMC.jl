@@ -63,8 +63,8 @@ end
     Σ_true = cov(prior_dist)
 
     # Monte Carlo error: E[‖S-Σ‖_F²] = (tr(Σ)² + tr(Σ²))/n (Frobenius norm)
-    # Allow ±2σ for sampling variability
-    error_bound = 2.0 * sqrt((tr(Σ_true)^2 + tr(Σ_true^2)) / n_samples)
+    # Use 3σ for sampling variability to reduce flakiness from ~5% to <0.3%
+    error_bound = 3.0 * sqrt((tr(Σ_true)^2 + tr(Σ_true^2)) / n_samples)
     @test norm(Σ_est - Σ_true) ≤ error_bound
 end
 

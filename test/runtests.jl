@@ -10,4 +10,5 @@ include("test_utils.jl")
     include("test_mcmc_kernels.jl")
     include("test_smc_gaussian.jl")
     include("test_waste_free_smc.jl")
+    include("test_type_stability.jl")
 end

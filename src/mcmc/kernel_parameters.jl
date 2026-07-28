@@ -23,7 +23,7 @@ function update_parameters!(adpt::ScaleAdaptation,chains,Σ)
 	for j in eachindex(chains,adpt.w)
 		c = chains[j]
 		# Rao-Blackwellized estimator of the Expected squared jump distance
-		w = 0.
+		w = zero(eltype(adpt.w))
 		for i in 1:length(c.states)-1
 			δ = c.states[i+1].x-c.states[i].x
 			w += c.γ[i] * invquad(Σ,δ)

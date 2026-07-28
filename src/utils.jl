@@ -147,7 +147,7 @@ function enforce_type(res::AbstractVector{T}) where T
 end
 
 
-function ensure_posdef(M::Matrix{T}; max_jitter_retries=10) where T <: Real
+function ensure_posdef(M::Matrix{T}) where T <: Real
 	ε = sqrt(eps(T))
 	invε = inv(ε)
 	if !issymmetric(M)
@@ -156,16 +156,16 @@ function ensure_posdef(M::Matrix{T}; max_jitter_retries=10) where T <: Real
 
 	# Try Cholesky first (fast path for well-conditioned matrices)
 	try
-		cholesky(Symmetric(M))
+		chol = cholesky(Symmetric(M))
 		# If Cholesky succeeds, matrix is already PD
-		return Symmetric(M)
+		return PDMat(Symmetric(M),chol)
 	catch
 		# Fall back to eigenvalue approach for ill-conditioned matrices
 		F = eigen(Symmetric(M))
 		for i in eachindex(F.values)
 			F.values[i] = clamp(F.values[i], ε, invε)
 		end
-		return Symmetric(Matrix(F))
+		return PDMat(Symmetric(Matrix(F)))
 	end
 end
 
@@ -187,14 +187,14 @@ function ensure_posdef_and_invert(M::Matrix{T}) where T <: Real
 		L = chol.L
 		# Compute (L * L')^(-1) = (L')^(-1) * L^(-1) efficiently
 		Linv = inv(UpperTriangular(L'))
-		return Symmetric(Linv * Linv')
+		return PDMat(Symmetric(Linv * Linv'),Cholesky(L))
 	catch
 		# Fall back to eigenvalue approach for ill-conditioned matrices
 		F = eigen(Symmetric(M))
 		for i in eachindex(F.values)
 			F.values[i] = clamp(1/F.values[i], ε, invε)
 		end
-		return Symmetric(F.vectors * Diagonal(F.values) * F.vectors')
+		return PDMat(Symmetric(F.vectors * Diagonal(F.values) * F.vectors'))
 	end
 end
 

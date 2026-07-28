@@ -21,9 +21,9 @@ function estimate_metric(c::ParticleCov,samples,weights,_,xs)
 		v = var(samples,FrequencyWeights(weights))
 		Fill(PDMat(reshape([v],1,1)),length(xs))
 	else
-		Fill(PDMat(ensure_posdef(cov(
+		Fill(ensure_posdef(cov(
 			samples,FrequencyWeights(weights),2
-		))),length(xs))
+		)),length(xs))
 	end
 end
 
@@ -81,7 +81,7 @@ function estimate_metric(c::EmpiricalFisher,samples,weights,states::AbstractVect
     s.gradlogp * s.gradlogp'
   end
 
-  Fill(PDMat(ensure_posdef_and_invert(F)),length(xs))
+  Fill(ensure_posdef_and_invert(F),length(xs))
 end
 
 struct ParticleRepresentation <: AbstractMetric end

@@ -126,7 +126,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 			metric_estimate = if metric_estimator isa ParticleCov
 				Fill(Σg, length(starting_x))
 			else
-				estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
+				estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x,progress_fraction(state.seq_state))
 			end
 		end
 		state.t_mcmc = @elapsed begin
@@ -286,7 +286,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 		target = FullLogDensity(ref_logdensity,mul_logdensity)
 		starting_x = [state.samples[:,i] for i in indices]
 		state.t_metric = @elapsed begin
-			metric_estimate = estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
+			metric_estimate = estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x,progress_fraction(state.seq_state))
 		end
 
 		local chains

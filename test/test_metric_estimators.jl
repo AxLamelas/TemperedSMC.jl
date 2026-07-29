@@ -11,7 +11,7 @@ include("test_utils.jl")
     samples = randn(dim, 100)
     weights = ones(100) / 100
 
-    Σ_est_list = TemperedSMC.estimate_metric(metric, samples, weights, [], [randn(dim)])
+    Σ_est_list = TemperedSMC.estimate_metric(metric, samples, weights, [], [randn(dim)], 0.5)
 
     # IdentityMetric returns a Fill array of identity matrices
     expected = I(dim)

@@ -1,10 +1,10 @@
 abstract type AbstractMetric end
 
-function estimate_metric(_::AbstractMetric,samples,weights,states,xs) end
+function estimate_metric(_::AbstractMetric,samples,weights,states,xs,t) end
 
 struct IdentityMetric <: AbstractMetric end
 
-estimate_metric(_::IdentityMetric,samples,weights,_,xs) = Fill(PDMat(Diagonal(ones(eltype(samples),size(samples,1)))),length(xs))
+estimate_metric(_::IdentityMetric,samples,weights,_,xs,_) = Fill(PDMat(Diagonal(ones(eltype(samples),size(samples,1)))),length(xs))
 
 struct FixedMetric{T <: PDMat} <: AbstractMetric
 	M::T
@@ -12,11 +12,11 @@ end
 
 FixedMetric(M::AbstractMatrix) = FixedMetric(PDMat(M))
 
-estimate_metric(m::FixedMetric,samples,weights,_,xs) = Fill(m.M,length(xs))
+estimate_metric(m::FixedMetric,samples,weights,_,xs,_) = Fill(m.M,length(xs))
 
 struct ParticleCov <: AbstractMetric end
 
-function estimate_metric(c::ParticleCov,samples,weights,_,xs)
+function estimate_metric(c::ParticleCov,samples,weights,_,xs,_)
 	if size(samples,1) == 1
 		v = var(samples,FrequencyWeights(weights))
 		Fill(PDMat(reshape([v],1,1)),length(xs))
@@ -35,7 +35,7 @@ end
 
 struct ParticleVar <: AbstractMetric end
 
-function estimate_metric(c::ParticleVar,samples,weights,_,xs)
+function estimate_metric(c::ParticleVar,samples,weights,_,xs,_)
 	if size(samples,1) == 1
 		v = var(samples,FrequencyWeights(weights))
 		Fill(PDMat(reshape([v],1,1)),length(xs))
@@ -62,7 +62,7 @@ function _kernel_estimate(c::KernelCov,V,ref_samples,wfun,xs)
   end
 end
 
-function estimate_metric(c::KernelCov,samples,weights,_,xs)
+function estimate_metric(c::KernelCov,samples,weights,_,xs,_)
   V = Diagonal(var(samples,FrequencyWeights(weights),2))
   n_samples = size(samples,2)
   if n_samples > c.max_samples
@@ -75,7 +75,7 @@ end
 
 struct EmpiricalFisher <: AbstractMetric end
 
-function estimate_metric(c::EmpiricalFisher,samples,weights,states::AbstractVector{<:GradientChainState},xs)
+function estimate_metric(c::EmpiricalFisher,samples,weights,states::AbstractVector{<:GradientChainState},xs,_)
   # TODO:  Make this more efficient
   F = mean(states) do s
     s.gradlogp * s.gradlogp'
@@ -86,6 +86,6 @@ end
 
 struct ParticleRepresentation <: AbstractMetric end
 
-function estimate_metric(_::ParticleRepresentation,samples,weights,states,xs)
+function estimate_metric(_::ParticleRepresentation,samples,weights,states,xs,_)
 	Fill(samples,length(xs))
 end

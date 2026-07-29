@@ -11,7 +11,8 @@ TemperedSMC.jl is a Julia package implementing Sequential Monte Carlo (SMC) algo
 - **Tempering sequences**: Automatic temperature scheduling using conditional effective sample size (CESS)
 
 The package is primarily a research implementation for PhD work, focusing on sampling from complex target distributions and Bayesian model comparison.
-No need to make pull request as this is solo work. Merge directly into main.
+No need to make pull request as this is solo work. Merge directly into local main. 
+Strict requirement: do not push!
 
 ## Core Architecture
 
@@ -113,15 +114,17 @@ Benchmark suite in `benchmark/` directory for performance evaluation per log-den
     - implement mutating version of the methods that return vectors
 
 2. **Design and implement Population-based kernels**
+    - Population-based kernels refer to kernels that take all the particles to move and updated while individual kernels take a single particle and update it, being repeated for all particles
     - Add abstract subtypes of `AbstractMCMCKernel` for individual and population based kernels
-    - Make a common interface so that they can be used seemly within smc and waste_free_smc
+    - Make a population kernel that takes and individual kernel and applies it independently. This kernel must use map_func.
+    - Adapt smc and waste_free_smc to use population-based kernels and construct the above type when passed an individual kernel
 
 3. **Design and implement collective and individual implementations of Gibbs**
 
 4. **Generalize the ad hoc handling of 0 acceptance rate**
 
 5. **Design and Implement adaptive steps**
-    - Compare current implementation with WFSMC paper and the Particles.py implementation
+    - Compare current implementation with WFSMC paper and the Particles.py[https://github.com/nchopin/particles] implementation
     - Design it to be compatible with smc and waste_free_smc
 
 6. **Implement IBIS** (`src/TemperedSMC.jl:37`)

@@ -58,10 +58,11 @@ Key parameters:
 
 ### Supporting Components
 
-- **`utils.jl`**: Helper functions including `FullLogDensity` (product of reference × muliplying density) and `stabilized_map` (wraps failures)
+- **`utils.jl`**: Helper functions including `FullLogDensity` (product of reference × multiplying density), `stabilized_map` (wraps failures), and `ensure_posdef` (hybrid Cholesky via eigendecomposition for numerical stability)
 - **`resampling.jl`**: Resampling methods (`ResidualResampler`, `SystematicResampler`, `MultinomialResampler`)
 - **`factorized_logdensity.jl`**: Interface for product densities used in tempering
 - **`MetaNumber`**: Wraps scalar values with metadata (e.g., original log-density before tempering), used to track information throughout the algorithm
+- **`metric_estimators.jl`**: Covariance estimation for adaptive kernels, including `FixedMetric` for constant metrics and `IdentityMetric` with Fill arrays for memory efficiency
 
 ## Commands
 
@@ -79,69 +80,94 @@ result = smc(adaptive_tempering, target, samples; mcmc_kernel=MALA(), ...)
 ```
 
 ### Testing
-No formal test suite yet. Validation is typically done via:
-- Example scripts in PhD notebooks / separate experiments
-- Checking that MCMC chain diagnostics match theoretical expectations
-- Comparing SMC evidence estimates against known benchmarks
+Comprehensive test suite in `test/` directory with analytical ground truth validation:
+- `test_smc_gaussian.jl`: SMC correctness against Gaussian targets
+- `test_waste_free_smc.jl`: Waste-free algorithm validation
+- `test_mcmc_kernels.jl`: Individual kernel behavior
+- `test_adaptive_tempering.jl`: Temperature schedule adaptation
+- `test_metric_estimators.jl`: Covariance estimation quality
+- `test_type_stability.jl`: Type stability and allocation regression checks
+- `test_resampling.jl`: Resampling method correctness
+- `test_metanumber_fulldensity.jl`: MetaNumber tracking and FullLogDensity logic
 
-To verify basic functionality after changes:
-```julia
-using TemperedSMC, Distributions, LogDensityProblems
-# Create a simple target and run SMC with default settings
+Run tests via:
+```bash
+julia --project -e 'using Pkg; Pkg.test()'
 ```
+
+Benchmark suite in `benchmark/` directory for performance evaluation per log-density call.
 
 ## Key Design Decisions & TODOs
 
-### Current TODOs 
+### Completed TODOs
 
-1. **Add timmings to the state of smc and waste_free_smc and return the information**
+1. ✅ **Add timings to the state of smc and waste_free_smc and return the information** — `SMCState` now includes `mcmc_times` (per-particle step times) and `step_counts` (adaptive step info)
+2. ✅ **Add benchmark suite for the cost of the implementation per logdensity call** — `benchmark/benchmarks.jl` provides performance profiling
 
-2. **Add benchmark of the cost of the implementation per logdensity call**
+### Current TODOs
 
-3. **Design and implement factorized logdensity interface**
+1. **Design and implement factorized logdensity interface**
     - method to get all logdensity
     - method to get one log density value
     - method to get multiply, specified logdensity values
     - implement mutating version of the methods that return vectors
 
-4. **Design and implement Population-based kernels**
+2. **Design and implement Population-based kernels**
     - Add abstract subtypes of `AbstractMCMCKernel` for individual and population based kernels
     - Make a common interface so that they can be used seemly within smc and waste_free_smc
 
-5. **Design and implement collective and individual implementations of Gibbs**
+3. **Design and implement collective and individual implementations of Gibbs**
 
-6. **Generalize the ad hoc handling of 0 acceptance rate**
+4. **Generalize the ad hoc handling of 0 acceptance rate**
 
-7. **Design and Implement adaptive steps**
+5. **Design and Implement adaptive steps**
     - Compare current implementation with WFSMC paper and the Particles.py implementation
     - Design it to be compatible with smc and waste_free_smc
 
-8. **Implement IBIS** (`src/TemperedSMC.jl:37`)
+6. **Implement IBIS** (`src/TemperedSMC.jl:37`)
    - Importance-Batch-Importance-Sampling for sequential inference without tempering
 
-9. **Implement Stein variational gradient descent as a collective kernel**
+7. **Implement Stein variational gradient descent as a collective kernel**
 
-10. **Look into transport maps**
+8. **Look into transport maps**
     - eg normalizing flows 
 
-11. **Remove samples from SMCState** (`src/smc.jl:1`)
+9. **Remove samples from SMCState** (`src/smc.jl:1`)
    - Samples are redundant with chain states; consider consolidating
 
 ### Historical Context
 
-Recent major work (git log):
+Recent major work (phases A–G, 2026-07):
+- **Phase A (886d66e)**: Fixed three correctness bugs — FullLogDensity -Inf branch, waste_free_smc n_starting mismatch, DifferentialEvo index confusion
+- **Phase B (5588714)**: Fixed test issues — waste_free_smc kwarg type drift, MALA/ULA GradientChainState, MetaNumber zero/one operations
+- **Phase C (796bb89)**: Performance optimizations — FixedMetric, IdentityMetric with Fill arrays, selective copy, redundant cov bypass
+- **Phase D (c129496)**: Performance optimizations — trace via tr(), selective copy
+- **Phase E.2 (11d25eb)**: BLAS optimization — replaced dense rank-1 update with BLAS.ger! in FisherMALA/FisherULA
+- **Phase F.1 (70f075f)**: Hybrid Cholesky approach for ensure_posdef with factor-based inversion
+- **Phase G.1 (4276e3e)**: Type-stability and allocation regression test infrastructure
+- **Phase G.2 (001fd66)**: Mixed-precision support — Float32 fields in kernel states
+- **Phase G.3 (9cd9fd3)**: Flipped `store_trace` default to false for reduced memory
+- **Test suite (1e72783)**: Comprehensive tests with analytical ground truth validation
+- **Benchmark suite (64f75a3)**: Performance profiling per log-density call
+- **CESS formula fix (2f5de82)**: Corrected CESS formula, adjusted tolerances, documented ULA edge cases
+- **Eigendecomposition Cholesky (e2de464)**: Compute Cholesky factorization from eigendecomposition in ensure_posdef
+- **ensure_posdef refactor (8feb28e)**: Now returns PDMat for downstream efficiency
+
+Older work:
 - **Removed internal Base.result_types reliance** (f51a39c): No longer depends on undocumented Base internals
-- **Chain state initialization fixes** (bd9de95): Proper setup for gradient vs. non-gradient kernels
-- **Bug fixes in MCMC kernels** (b998b6a): Corrected acceptance logic and parameter updates
-- **Kernel parameter refactoring** (9bc0005): Separated parameters from kernel logic to enable strategy pluggability
+- **Chain state initialization fixes**: Proper setup for gradient vs. non-gradient kernels
+- **Kernel parameter refactoring**: Separated parameters from kernel logic to enable strategy pluggability
 
 ### Key Patterns
 
 - **Dual-mode kernels**: All kernels support `Val{false}` (no gradients, cheaper) and `Val{true}` (with gradients, more efficient)
+- **Mixed-precision support**: Kernel states support both Float64 and Float32 fields for memory/performance trade-offs (Phase G.2)
 - **Lazy adaptation**: Kernel and metric adaptation happen post-hoc on acceptance/jump distance; no online preconditioning during kernel initialization
 - **MetaNumber tracking**: Log-densities wrapped to preserve information (e.g., unnormalized density before tempering) for later analysis
 - **Resampling callbacks**: Via optional `callback` parameter in `smc()`; allows external logging/monitoring
 - **CESS/ESS Normalization**: CESS and ESS metrics are normalized relative to N (in [0, 1] range), not absolute (in [1, N] range). This is by design—the adaptive tempering and resampling use relative values (fractions of sample size), which is cleaner for algorithms that should be invariant to N. The bisection target `α` (default 0.8) operates on this normalized scale.
+- **Memory-efficient tracing**: `store_trace` defaults to false; enable only when full MCMC chain data is needed (Phase G.3)
+- **Type stability**: All kernels and estimators are type-stable with no allocations during core loops (verified via `test_type_stability.jl`)
 
 ## Dependencies
 

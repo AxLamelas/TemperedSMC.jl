@@ -94,9 +94,9 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 				state.W[i] = exp(state.lw[i]-lw_norm_constant)
 			end
 
-			Σg = PDMat(ensure_posdef(cov(
+			Σg = ensure_posdef(cov(
 				state.samples,FrequencyWeights(state.W),2
-			)))
+			))
 
 			state.trcov_reweight = tr(Σg)
 		end
@@ -123,11 +123,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 		target = FullLogDensity(ref_logdensity,mul_logdensity)
 		starting_x = [state.samples[:,i] for i in indices]
 		state.t_metric = @elapsed begin
-			metric_estimate = if metric_estimator isa ParticleCov
-				Fill(Σg, length(starting_x))
-			else
-				estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x)
-			end
+			metric_estimate = estimate_metric(metric_estimator, state.samples,state.W,state.states,starting_x) 
 		end
 		state.t_mcmc = @elapsed begin
 			chains,n_steps = if adapt_mcmc_steps
@@ -180,9 +176,9 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 			state.states[i] = c.states[end]
 		end
 
-		Σg = PDMat(ensure_posdef(cov(
+		Σg = ensure_posdef(cov(
 			state.samples,FrequencyWeights(state.W),2
-		)))
+		))
 
 		state.t_adapt = @elapsed begin
 			update_parameters!(ker_parameters,chains,Σg)
@@ -321,9 +317,9 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 
 		state.trcov_mcmc = sum(var(state.samples,FrequencyWeights(state.W),2))
 
-		Σg = PDMat(ensure_posdef(cov(
+		Σg = ensure_posdef(cov(
 			state.samples,FrequencyWeights(state.W),2
-		)))
+		))
 
 		state.t_adapt = @elapsed begin
 			update_parameters!(ker_parameters,chains,Σg)

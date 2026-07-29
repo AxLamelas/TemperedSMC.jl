@@ -18,7 +18,7 @@
 #   return chain_state, accepted, γ ^ (1/k.n_steps), state
 # end
 
-struct DifferentialEvo <: AbstractMCMCKernel{Val{false}} end
+struct DifferentialEvo <: AbstractIndividualKernel{Val{false}} end
 
 init_kernel_state(k::DifferentialEvo,x,scale,particles) = (; scale,particles)
 
@@ -127,7 +127,7 @@ end
 
 
 # From https://doi.org/10.48550/arXiv.2410.18929
-abstract type AbstractAutoStep{G} <: AbstractMCMCKernel{G} end
+abstract type AbstractAutoStep{G} <: AbstractIndividualKernel{G} end
 
 function init_kernel_state(_::AbstractAutoStep,x,scale,Σ)
 	return (;init_step=scale,Σ=Σ)
@@ -274,7 +274,7 @@ function involution(::AutoStepRWMH,θ,target,x,logp_x,z,Σ)
 	y, logp_y, -z,logα
 end
 
-Base.@kwdef @concrete struct FisherMALA <: AbstractMCMCKernel{Val{true}}
+Base.@kwdef @concrete struct FisherMALA <: AbstractIndividualKernel{Val{true}}
 	λ = 10.
 	αstar = 0.574
 end
@@ -340,7 +340,7 @@ function (k::FisherMALA)(target,chain_state::GradientChainState,state)
 	return GradientChainState(x, logp_x, gradlogp_x), false, α, next_state
 end
 
-Base.@kwdef @concrete struct FisherULA <: AbstractMCMCKernel{Val{true}}
+Base.@kwdef @concrete struct FisherULA <: AbstractIndividualKernel{Val{true}}
 	λ = 10.
 	αstar = 0.574
 end
@@ -404,7 +404,7 @@ function (k::FisherULA)(target,chain_state::GradientChainState,state)
 	return GradientChainState(y, logp_y, gradlogp_y), true, α, next_state
 end
 
-struct MALA <: AbstractMCMCKernel{Val{true}} end
+struct MALA <: AbstractIndividualKernel{Val{true}} end
 
 function init_kernel_state(_::MALA,x,scale,Σ)
 	(;ϵ=scale,R=Σ.chol.L)
@@ -435,7 +435,7 @@ function (k::MALA)(target,chain_state::GradientChainState,state)
 	return GradientChainState(x, logp_x, gradlogp_x), false, α, state
 end
 
-struct ULA <: AbstractMCMCKernel{Val{true}} end
+struct ULA <: AbstractIndividualKernel{Val{true}} end
 
 function init_kernel_state(_::ULA,x,scale,Σ)
 	(;ϵ=scale/(tr(Σ)/length(x)),R=Σ.chol.L)
@@ -466,7 +466,7 @@ function (k::ULA)(target,chain_state::GradientChainState,state)
 	return GradientChainState(y, logp_y, gradlogp_y), true, α, state
 end
 
-Base.@kwdef @concrete struct PathDelayedRejection <: AbstractMCMCKernel{Val{false}}
+Base.@kwdef @concrete struct PathDelayedRejection <: AbstractIndividualKernel{Val{false}}
 	proposal_dist = Normal()
 	n_stages = 4
 	factor = 0.25
@@ -539,7 +539,7 @@ function (k::PathDelayedRejection)(target,chain_state::ChainState,C::PDMat)
 	return chain_state, false, α/n_stages, C
 end
 
-Base.@kwdef @concrete struct RWMH <: AbstractMCMCKernel{Val{false}}
+Base.@kwdef @concrete struct RWMH <: AbstractIndividualKernel{Val{false}}
 	proposal_dist = Normal()
 end
 
@@ -562,7 +562,7 @@ function (k::RWMH)(target,chain_state::ChainState,C::PDMat)
 	return ChainState(x, logp_x), false, α, C
 end
 
-Base.@kwdef @concrete struct SliceSampling <: AbstractMCMCKernel{Val{false}}
+Base.@kwdef @concrete struct SliceSampling <: AbstractIndividualKernel{Val{false}}
 	m = 20 # Determines the maximum number of log density evaluation in the stepping-out procedure
 end
 
@@ -622,4 +622,76 @@ function (k::SliceSampling)(target,chain_state::ChainState,state)
 			R = Δ
 		end
 	end
+end
+
+# ============================================================================
+# PopulationKernel: Generic wrapper to apply individual kernels to populations
+# ============================================================================
+
+"""
+    PopulationKernel{G,K<:AbstractIndividualKernel{G}} <: AbstractPopulationKernel{G}
+
+Wraps an individual kernel to apply it independently to each particle in a population.
+Uses map_func for parallel/distributed execution.
+
+Kernel state is a Vector of individual kernel states (one per particle).
+Calling convention: (target, chain_states::Vector, ker_states::Vector)
+                    → (new_chain_states::Vector, accepted::Vector{Bool}, metrics::Vector, new_ker_states::Vector)
+"""
+struct PopulationKernel{G,K<:AbstractIndividualKernel{G}} <: AbstractPopulationKernel{G}
+    kernel::K
+    map_func::Function  # Captured at construction; default is `map`, can be pmap/distributed
+end
+
+function PopulationKernel(k::AbstractIndividualKernel{G}; map_func=map) where G
+    PopulationKernel{G, typeof(k)}(k, map_func)
+end
+
+"""
+    init_chain_state(k::PopulationKernel, target, xs::Vector{<:AbstractVector})
+
+Batch initialization: builds a PopulationChainState from a vector of particle positions.
+Each particle gets its own individual ChainState/GradientChainState via the wrapped kernel.
+"""
+function init_chain_state(k::PopulationKernel, target, xs::Vector{<:AbstractVector})
+    PopulationChainState(k.map_func(xs) do x
+        init_chain_state(k.kernel, target, x)
+    end)
+end
+
+"""
+    init_kernel_state(k::PopulationKernel, xs::Vector, scales, Σs)
+
+Batch initialization: builds a PopulationKernelState from vectors of particle positions,
+scales (per-particle or Fill), and metrics (per-particle or Fill).
+Each particle gets its own individual kernel state via the wrapped kernel.
+"""
+function init_kernel_state(k::PopulationKernel, xs::Vector, scales, Σs)
+    PopulationKernelState(k.map_func(xs, scales, Σs) do x, s, Σ
+        init_kernel_state(k.kernel, x, s, Σ)
+    end)
+end
+
+"""
+    (k::PopulationKernel)(target, chain_state::PopulationChainState, ker_state::PopulationKernelState)
+
+Apply the wrapped individual kernel to each particle independently via map_func.
+Chain state and kernel state are population-level aggregates (single chain_state/ker_state value,
+containing all particles' individual states).
+
+Returns: (new_chain_state::PopulationChainState, accepted::Vector{Bool}, γ::Vector, new_ker_state::PopulationKernelState)
+- accepted and γ are per-particle (the acceptance signal/metric, not state)
+"""
+function (k::PopulationKernel)(target, chain_state::PopulationChainState, ker_state::PopulationKernelState)
+    results = k.map_func(chain_state.states, ker_state.states) do cs, ks
+        k.kernel(target, cs, ks)
+    end
+
+    # Unpack results: Vector of (new_cs, acc, metric, new_ks) tuples
+    new_states     = getindex.(results, 1)
+    accepted       = getindex.(results, 2)   # Vector{Bool} — per-particle
+    γs             = getindex.(results, 3)   # Vector — per-particle
+    new_ker_states = getindex.(results, 4)
+
+    return PopulationChainState(new_states), accepted, γs, PopulationKernelState(new_ker_states)
 end

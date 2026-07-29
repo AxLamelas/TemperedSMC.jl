@@ -63,12 +63,19 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 			 )
 
 
+	# Normalize kernel to population-based
+	pop_kernel = if mcmc_kernel isa AbstractPopulationKernel
+		mcmc_kernel  # Already population-based
+	else
+		PopulationKernel(mcmc_kernel; map_func=map_func)  # Wrap individual kernel
+	end
+
 	n_dims, n_samples = size(initial_samples)
 	lN = -log(n_samples)
 
 	loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 
-	state = SMCState(seq,ref_logdensity,initial_samples,mcmc_kernel,map_func)
+	state = SMCState(seq,ref_logdensity,initial_samples,pop_kernel,map_func)
 	trace = typeof(state)[]
 
 	indices_no_resampling = collect(1:n_samples)

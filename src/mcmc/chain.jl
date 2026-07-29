@@ -103,3 +103,91 @@ function mcmc_chain(mcmc_kernel::AbstractMCMCKernel{Val{false}},target,x,state,n
 
   return (;n_accepts,states=chain,kernel_state=state,γ)
 end
+
+# ============================================================================
+# Population Kernel MCMC: iterate_mcmc and mcmc_chain overloads
+# ============================================================================
+
+"""
+    iterate_mcmc(mcmc_kernel::AbstractPopulationKernel, target, xs::Vector{<:AbstractVector}, state, n_steps)
+
+Convenience overload: initialize chain state from raw particle positions before running iterate_mcmc.
+Guards against mis-dispatching to individual kernel auto-init overloads.
+"""
+function iterate_mcmc(mcmc_kernel::AbstractPopulationKernel, target, xs::Vector{<:AbstractVector},
+                      state::PopulationKernelState, n_steps::Int; kwargs...)
+    iterate_mcmc(mcmc_kernel, target, init_chain_state(mcmc_kernel, target, xs), state, n_steps; kwargs...)
+end
+
+"""
+    iterate_mcmc(mcmc_kernel::AbstractPopulationKernel, target, chain_state::PopulationChainState, state::PopulationKernelState, n_steps)
+
+Apply population kernel n_steps times, accumulating acceptance metrics and counts across all particles.
+"""
+function iterate_mcmc(mcmc_kernel::AbstractPopulationKernel, target,
+                      chain_state::PopulationChainState, state::PopulationKernelState, n_steps::Int;
+                      logγ = zeros(length(chain_state)), n_accepts = zeros(Int, length(chain_state)))
+    if any(isnan, logγ)
+        throw(error("Called with NaN logγ"))
+    end
+    for i in 1:n_steps
+        chain_state, acc, γi, state = mcmc_kernel(target, chain_state, state)
+        n_accepts .+= acc
+        logγ .+= ifelse.(acc, log.(γi), log.(1 .- γi))
+        if any(isnan, logγ)
+            throw(error("Resulted in NaN logγ when updating population"))
+        end
+    end
+
+    return (;n_accepts, chain_state, kernel_state=state, logγ)
+end
+
+"""
+    mcmc_chain(mcmc_kernel::AbstractPopulationKernel, target, xs::Vector{<:AbstractVector}, state::PopulationKernelState, n_samples)
+
+Run population MCMC chain for n_samples steps, tracking full history.
+Returns time-major data: Vector{PopulationChainState}, each storing all particles at a time step.
+"""
+function mcmc_chain(mcmc_kernel::AbstractPopulationKernel, target,
+                    xs::Vector{<:AbstractVector}, state::PopulationKernelState, n_samples::Int;
+                    callback=NoCallback())
+    chain_state = init_chain_state(mcmc_kernel, target, xs)
+    n = length(chain_state)
+    n_accepts = zeros(Int, n)
+    chain = Vector{typeof(chain_state)}(undef, n_samples)
+    chain[1] = chain_state
+    γ = Vector{Vector{Float64}}(undef, n_samples - 1)
+
+    for i in 1:n_samples-1
+        chain[i+1], acc, γ[i], state = mcmc_kernel(target, chain[i], state)
+        n_accepts .+= acc
+        callback((;chain_state=chain[i+1], accepted=acc, γ=γ[i], state))
+    end
+
+    return (;n_accepts, states=chain, kernel_state=state, γ)
+end
+
+# ============================================================================
+# Transpose helper: convert time-major to per-particle NamedTuple shape
+# ============================================================================
+
+"""
+    per_particle_chains(result)
+
+Transpose population-level MCMC result (time-major) to per-particle chains (particle-major).
+Converts Vector{PopulationChainState} indexed by time step to Vector of per-particle NamedTuples
+with fields (n_accepts, states::Vector, γ::Vector, kernel_state), reproducing the shape
+expected by kernel_parameters.jl and smc.jl's write-back loops.
+"""
+function per_particle_chains(result)
+    n_particles = length(result.states[1])
+    n_time = length(result.states)
+    n_γsteps = length(result.γ)
+    [
+        (;n_accepts = result.n_accepts[j],
+          states    = [result.states[i][j] for i in 1:n_time],
+          γ         = [result.γ[i][j] for i in 1:n_γsteps],
+          kernel_state = result.kernel_state.states[j])
+        for j in 1:n_particles
+    ]
+end

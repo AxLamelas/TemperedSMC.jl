@@ -53,13 +53,13 @@ LD = LogDensityProblems
         xs = [randn(2) for _ in 1:n_samples]  # Dummy starting positions for metric estimators
 
         # IdentityMetric
-        _ = TemperedSMC.estimate_metric(TemperedSMC.IdentityMetric(), samples, W, [], xs)
-        alloc = @allocated TemperedSMC.estimate_metric(TemperedSMC.IdentityMetric(), samples, W, [], xs)
+        _ = TemperedSMC.estimate_metric(TemperedSMC.IdentityMetric(), samples, W, [], xs, 0.5)
+        alloc = @allocated TemperedSMC.estimate_metric(TemperedSMC.IdentityMetric(), samples, W, [], xs, 0.5)
         @test alloc >= 0
 
         # ParticleCov
-        _ = TemperedSMC.estimate_metric(TemperedSMC.ParticleCov(), samples, W, [], xs)
-        alloc = @allocated TemperedSMC.estimate_metric(TemperedSMC.ParticleCov(), samples, W, [], xs)
+        _ = TemperedSMC.estimate_metric(TemperedSMC.ParticleCov(), samples, W, [], xs, 0.5)
+        alloc = @allocated TemperedSMC.estimate_metric(TemperedSMC.ParticleCov(), samples, W, [], xs, 0.5)
         @test alloc >= 0
     end
 end

@@ -16,6 +16,8 @@ function progress_info(state::TemperedState)
 	[("β",last(state.β)),("Maximum ℓ",maximum(state.ℓ))]
 end
 
+progress_fraction(state::TemperedState) = last(state.β)
+
 struct TemperedLogDensity{D,T}
 	den::D
 	β::T

@@ -88,6 +88,16 @@ function estimate_metric(c::EmpiricalFisher,samples,weights,states::AbstractVect
 	Fill(ensure_posdef_and_invert(F),length(xs))
 end
 
+struct DiagEmpiricalFisher <: AbstractMetric end
+
+function estimate_metric(c::DiagEmpiricalFisher,samples,weights,states::AbstractVector{<:GradientChainState},xs,_)
+	Fd = mean(states) do s
+		s.gradlogp .* s.gradlogp
+	end
+
+	Fill(PDMat(Diagonal(1 ./ Fd)),length(xs))
+end
+
 struct ParticleRepresentation <: AbstractMetric end
 
 function estimate_metric(_::ParticleRepresentation,samples,weights,states,xs,_)

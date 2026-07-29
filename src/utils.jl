@@ -163,9 +163,12 @@ function ensure_posdef(M::Matrix{T}) where T <: Real
 		# Fall back to eigenvalue approach for ill-conditioned matrices
 		F = eigen(Symmetric(M))
 		for i in eachindex(F.values)
-			F.values[i] = clamp(F.values[i], ε, invε)
+			F.values[i] = sqrt(clamp(F.values[i], ε, invε))
 		end
-		return PDMat(Symmetric(Matrix(F)))
+		rmul!(F.vectors,Diagonal(F.values))
+		fact = lq!(F.vectors)
+
+		return PDMat(fact.L * fact.L',Cholesky(LowerTriangular(fact.L)))
 	end
 end
 
@@ -183,18 +186,20 @@ function ensure_posdef_and_invert(M::Matrix{T}) where T <: Real
 		chol = cholesky(Symmetric(M))
 		# M = L * L', so M^(-1) = (L')^(-1) * L^(-1)
 		# Use triangular solves: I / L' / L for efficiency (avoids full matrix inversion)
-		d = size(M, 1)
 		L = chol.L
 		# Compute (L * L')^(-1) = (L')^(-1) * L^(-1) efficiently
-		Linv = inv(UpperTriangular(L'))
+		Linv = inv(UpperTriangular(chol.U))
 		return PDMat(Symmetric(Linv * Linv'),Cholesky(L))
 	catch
 		# Fall back to eigenvalue approach for ill-conditioned matrices
 		F = eigen(Symmetric(M))
 		for i in eachindex(F.values)
-			F.values[i] = clamp(1/F.values[i], ε, invε)
+			F.values[i] = sqrt(clamp(1/F.values[i], ε, invε))
 		end
-		return PDMat(Symmetric(F.vectors * Diagonal(F.values) * F.vectors'))
+		rmul!(F.vectors,Diagonal(F.values))
+		fact = lq!(F.vectors)
+
+		return PDMat(fact.L * fact.L',Cholesky(LowerTriangular(fact.L)))
 	end
 end
 

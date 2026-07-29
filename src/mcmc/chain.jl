@@ -105,42 +105,8 @@ function mcmc_chain(mcmc_kernel::AbstractMCMCKernel{Val{false}},target,x,state,n
 end
 
 # ============================================================================
-# Population Kernel MCMC: iterate_mcmc and mcmc_chain overloads
+# Population Kernel MCMC: mcmc_chain overload
 # ============================================================================
-
-"""
-    iterate_mcmc(mcmc_kernel::AbstractPopulationKernel, target, xs::Vector{<:AbstractVector}, state, n_steps)
-
-Convenience overload: initialize chain state from raw particle positions before running iterate_mcmc.
-Guards against mis-dispatching to individual kernel auto-init overloads.
-"""
-function iterate_mcmc(mcmc_kernel::AbstractPopulationKernel, target, xs::Vector{<:AbstractVector},
-                      state::PopulationKernelState, n_steps::Int; kwargs...)
-    iterate_mcmc(mcmc_kernel, target, init_chain_state(mcmc_kernel, target, xs), state, n_steps; kwargs...)
-end
-
-"""
-    iterate_mcmc(mcmc_kernel::AbstractPopulationKernel, target, chain_state::PopulationChainState, state::PopulationKernelState, n_steps)
-
-Apply population kernel n_steps times, accumulating acceptance metrics and counts across all particles.
-"""
-function iterate_mcmc(mcmc_kernel::AbstractPopulationKernel, target,
-                      chain_state::PopulationChainState, state::PopulationKernelState, n_steps::Int;
-                      logγ = zeros(length(chain_state)), n_accepts = zeros(Int, length(chain_state)))
-    if any(isnan, logγ)
-        throw(error("Called with NaN logγ"))
-    end
-    for i in 1:n_steps
-        chain_state, acc, γi, state = mcmc_kernel(target, chain_state, state)
-        n_accepts .+= acc
-        logγ .+= ifelse.(acc, log.(γi), log.(1 .- γi))
-        if any(isnan, logγ)
-            throw(error("Resulted in NaN logγ when updating population"))
-        end
-    end
-
-    return (;n_accepts, chain_state, kernel_state=state, logγ)
-end
 
 """
     mcmc_chain(mcmc_kernel::AbstractPopulationKernel, target, xs::Vector{<:AbstractVector}, state::PopulationKernelState, n_samples)

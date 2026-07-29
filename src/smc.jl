@@ -138,45 +138,49 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 		end
 		state.t_mcmc = @elapsed begin
 			chains,n_steps = if adapt_mcmc_steps
+				# Initialize population state: vectors of chain states and kernel states
+				chain_state = init_chain_state(pop_kernel, target, starting_x)
+				ker_state   = init_kernel_state(pop_kernel, starting_x, get_parameters(ker_parameters), metric_estimate)
 
-				chains = map(starting_x,get_parameters(ker_parameters),metric_estimate) do x,p,Σ
-					chain_state = init_chain_state(mcmc_kernel,target,x)
-					chain = Vector{typeof(chain_state)}(undef,mcmc_steps+1)
-					chain[1] = chain_state
-					γ = Vector{eltype(x)}(undef,mcmc_steps)
-					kernel_state = init_kernel_state(mcmc_kernel,x,p,Σ)
-					(;n_accepts=0,states=chain,kernel_state,γ)
-				end
+				# Store population state history and acceptance metrics
+				history   = [chain_state]
+				γ_history = Vector{Vector{Float64}}()
+				n_accepts = zeros(Int, length(starting_x))
 				n_steps = 0
 				prev_msjd = 0.
-				while true # Apply kernel until msjd stabilizes
-					chains = let i =n_steps + 1
-						stabilized_map(chains,map_func) do c
-							c.states[i+1],acc,c.γ[i],kernel_state =
-								mcmc_kernel(target,c.states[i],c.kernel_state)
-							(; n_accepts = c.n_accepts+acc, c.states,kernel_state,c.γ)
-						end
-					end
+
+				# Adaptive step loop: evolve population until MSJD stabilizes
+				while true
+					# Apply kernel to entire population at once
+					chain_state, acc, γi, ker_state = pop_kernel(target, chain_state, ker_state)
+
+					push!(history, chain_state)
+					push!(γ_history, γi)
+					n_accepts .+= acc
 					n_steps += 1
 
-					msjd = mean(chains) do c
-						invquad(Σg,c.states[n_steps+1].x-c.states[1].x)
+					# Compute mean squared jump distance
+					msjd = mean(zip(chain_state, history[1])) do (cs_now, cs_init)
+						invquad(Σg, cs_now.x - cs_init.x)
 					end
-					if abs((msjd-prev_msjd)) < adapt_stability*prev_msjd || n_steps >= mcmc_steps break end
+
+					if abs(msjd - prev_msjd) < adapt_stability * prev_msjd || n_steps >= mcmc_steps
+						break
+					end
 					prev_msjd = msjd
 				end
 
-				for c in chains
-					resize!(c.states,n_steps+1)
-					resize!(c.γ,n_steps)
-				end
+				# Convert population history to per-particle chains
+				chains = per_particle_chains((;n_accepts, states=history, kernel_state=ker_state, γ=γ_history))
+
 				chains, n_steps
 			else
-				chains = stabilized_map(collect(zip(starting_x,get_parameters(ker_parameters),metric_estimate)),map_func) do (x,p,Σ)
-					kernel_state = init_kernel_state(mcmc_kernel,x,p,Σ)
-					mcmc_chain(mcmc_kernel,target,x,kernel_state,mcmc_steps+1)
-				end
-				chains,mcmc_steps
+				# Non-adaptive: fixed steps
+				ker_state = init_kernel_state(pop_kernel, starting_x, get_parameters(ker_parameters), metric_estimate)
+				result = mcmc_chain(pop_kernel, target, starting_x, ker_state, mcmc_steps+1)
+				chains = per_particle_chains(result)
+
+				chains, mcmc_steps
 			end
 		end
 		state.n_steps = n_steps
@@ -239,6 +243,12 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 						show_progress = true
 						)
 
+	# Normalize kernel to population-based
+	pop_kernel = if mcmc_kernel isa AbstractPopulationKernel
+		mcmc_kernel  # Already population-based
+	else
+		PopulationKernel(mcmc_kernel; map_func=map_func)  # Wrap individual kernel
+	end
 
 	n_dims, n_samples = size(initial_samples)
 	lN = -log(n_samples)
@@ -254,7 +264,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 
 	loop_prog = ProgressUnknown(desc="Tempering:",showspeed=true,dt=1e-9,enabled = show_progress)
 
-	state = SMCState(seq,ref_logdensity,initial_samples,mcmc_kernel,map_func)
+	state = SMCState(seq,ref_logdensity,initial_samples,pop_kernel,map_func)
 	trace = typeof(state)[]
 
 	indices_no_resampling = collect(1:n_samples)
@@ -300,10 +310,9 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 
 		state.t_mcmc = @elapsed begin  # Captures total time across retries
 			for _ in 1:10 # TODO: generalize this
-				chains = stabilized_map(collect(zip(starting_x,get_parameters(ker_parameters),metric_estimate)),map_func) do (x,p,Σ)
-					kernel_state = init_kernel_state(mcmc_kernel,x,p,Σ)
-					mcmc_chain(mcmc_kernel,target,x,kernel_state,chain_length)
-				end
+				ker_state = init_kernel_state(pop_kernel, starting_x, get_parameters(ker_parameters), metric_estimate)
+				result = mcmc_chain(pop_kernel, target, starting_x, ker_state, chain_length)
+				chains = per_particle_chains(result)
 				# Average acceptance rate of the chains
 				state.acceptance_rate = sum(c.n_accepts for c in chains) / ((chain_length-1)*n_starting)
 

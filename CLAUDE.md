@@ -11,7 +11,8 @@ TemperedSMC.jl is a Julia package implementing Sequential Monte Carlo (SMC) algo
 - **Tempering sequences**: Automatic temperature scheduling using conditional effective sample size (CESS)
 
 The package is primarily a research implementation for PhD work, focusing on sampling from complex target distributions and Bayesian model comparison.
-No need to make pull request as this is solo work. Merge directly into main.
+No need to make pull request as this is solo work. Merge directly into local main. 
+Strict requirement: do not push!
 
 ## Core Architecture
 
@@ -26,11 +27,17 @@ The package uses three orthogonal, pluggable interfaces:
    - The sequence can be any ordered family of distributions; tempering is just one example
 
 2. **MCMC Kernels** (`src/mcmc/`)
-   - `AbstractMCMCKernel{G}`: Parametrized by `Val{G}` indicating gradient requirement (true/false)
+   - `AbstractMCMCKernel{G}`: Base type parametrized by `Val{G}` indicating gradient requirement (true/false)
+   - Two kernel hierarchies:
+     * `AbstractIndividualKernel{G}`: Single-particle kernels (RWMH, MALA, ULA, DifferentialEvo, DelayedRejection, AutoStepSize)
+     * `AbstractPopulationKernel{G}`: Multi-particle kernels that operate on aggregated state (automatic conversion from individual kernels)
    - Kernel calling convention: `(kernel::AbstractMCMCKernel)(target, chain_state, ker_state) → (new_chain_state, accepted::Bool, acceptance_metric, new_ker_state)`
-   - Chain states: `ChainState{T,L}` (position + log-density) or `GradientChainState{T,L}` (adds gradients)
-   - Kernel types: `RWMH`, `MALA`, `ULA`, `DifferentialEvo`, `DelayedRejection`, `AutoStepSize` (via `kernel_parameters.jl`)
+   - Chain states:
+     * Individual: `ChainState{T,L}` (position + log-density) or `GradientChainState{T,L}` (adds gradients)
+     * Population: `PopulationChainState{C,T}` (aggregate of per-particle states) or `PopulationKernelState{S}` (aggregate kernel states)
+   - Individual kernel types: `RWMH`, `MALA`, `ULA`, `DifferentialEvo`, `DelayedRejection`, `AutoStepSize` (via `kernel_parameters.jl`)
    - Kernels manage their own state (e.g., step-size, metric) via `ker_state` parameter
+   - `smc()` and `waste_free_smc()` normalize individual kernels to population kernels for batch processing
 
 3. **Metric Estimators** (`src/metric_estimators.jl`)
    - `AbstractMetric`: Estimates covariance for adaptive MCMC from particle samples
@@ -42,13 +49,14 @@ The package uses three orthogonal, pluggable interfaces:
 The main `smc()` function orchestrates these three interfaces:
 
 1. **Initialization**: Compute initial log-densities and resampling weights from tempering sequence
-2. **Loop**: For each temperature β in the sequence:
+2. **Kernel Normalization**: Convert individual kernel to population kernel (if needed) for batch processing
+3. **Loop**: For each temperature β in the sequence:
    - Update weights based on density change
    - Resampling if ESS falls below threshold
-   - Run MCMC on each particle (in parallel via `map_func`)
+   - Run population-level MCMC (all particles as one aggregate chain state)
    - Accumulate evidence for log-marginal-likelihood estimate
    - Adapt kernel parameters and metric based on acceptance/jump distance
-3. **Output**: `SMCState` containing samples, weights, evidence, acceptance rates, and MCMC chain states
+4. **Output**: `SMCState` containing samples, weights, evidence, acceptance rates, and MCMC chain states
 
 Key parameters:
 - `mcmc_steps`: Number of MCMC steps per particle (adaptive if `adapt_mcmc_steps=true`)
@@ -62,7 +70,8 @@ Key parameters:
 - **`resampling.jl`**: Resampling methods (`ResidualResampler`, `SystematicResampler`, `MultinomialResampler`)
 - **`factorized_logdensity.jl`**: Interface for product densities used in tempering
 - **`MetaNumber`**: Wraps scalar values with metadata (e.g., original log-density before tempering), used to track information throughout the algorithm
-- **`metric_estimators.jl`**: Covariance estimation for adaptive kernels, including `FixedMetric` for constant metrics and `IdentityMetric` with Fill arrays for memory efficiency
+- **`metric_estimators.jl`**: Covariance estimation for adaptive kernels, including `FixedMetric` for constant metrics, `IdentityMetric` with Fill arrays for memory efficiency, `EmpiricalFisher` using `ParticleCov`, and `DiagEmpiricalFisher` for diagonal approximation
+- **`chain.jl`**: Chain state management with `PopulationChainState` and `PopulationKernelState` for batch particle processing; `iterate_mcmc()` and `mcmc_chain()` for both individual and population kernels
 
 ## Commands
 
@@ -103,6 +112,7 @@ Benchmark suite in `benchmark/` directory for performance evaluation per log-den
 
 1. ✅ **Add timings to the state of smc and waste_free_smc and return the information** — `SMCState` now includes `mcmc_times` (per-particle step times) and `step_counts` (adaptive step info)
 2. ✅ **Add benchmark suite for the cost of the implementation per logdensity call** — `benchmark/benchmarks.jl` provides performance profiling
+3. ✅ **Design and implement Population-based kernels** — Added abstract subtypes `AbstractIndividualKernel` and `AbstractPopulationKernel`, with automatic normalization of individual kernels to population form; `smc()` and `waste_free_smc()` now use population kernels internally with batch initialization and state aggregation
 
 ### Current TODOs
 
@@ -112,32 +122,28 @@ Benchmark suite in `benchmark/` directory for performance evaluation per log-den
     - method to get multiply, specified logdensity values
     - implement mutating version of the methods that return vectors
 
-2. **Design and implement Population-based kernels**
-    - Add abstract subtypes of `AbstractMCMCKernel` for individual and population based kernels
-    - Make a common interface so that they can be used seemly within smc and waste_free_smc
+2. **Design and implement collective and individual implementations of Gibbs**
 
-3. **Design and implement collective and individual implementations of Gibbs**
+3. **Generalize the ad hoc handling of 0 acceptance rate**
 
-4. **Generalize the ad hoc handling of 0 acceptance rate**
-
-5. **Design and Implement adaptive steps**
-    - Compare current implementation with WFSMC paper and the Particles.py implementation
+4. **Design and Implement adaptive steps**
+    - Compare current implementation with WFSMC paper and the Particles.py[https://github.com/nchopin/particles] implementation
     - Design it to be compatible with smc and waste_free_smc
 
-6. **Implement IBIS** (`src/TemperedSMC.jl:37`)
+5. **Implement IBIS** (`src/TemperedSMC.jl:37`)
    - Importance-Batch-Importance-Sampling for sequential inference without tempering
 
-7. **Implement Stein variational gradient descent as a collective kernel**
+6. **Implement Stein variational gradient descent as a collective kernel**
 
-8. **Look into transport maps**
+7. **Look into transport maps**
     - eg normalizing flows 
 
-9. **Remove samples from SMCState** (`src/smc.jl:1`)
+8. **Remove samples from SMCState** (`src/smc.jl:1`)
    - Samples are redundant with chain states; consider consolidating
 
 ### Historical Context
 
-Recent major work (phases A–G, 2026-07):
+Recent major work (phases A–2B, 2026-07):
 - **Phase A (886d66e)**: Fixed three correctness bugs — FullLogDensity -Inf branch, waste_free_smc n_starting mismatch, DifferentialEvo index confusion
 - **Phase B (5588714)**: Fixed test issues — waste_free_smc kwarg type drift, MALA/ULA GradientChainState, MetaNumber zero/one operations
 - **Phase C (796bb89)**: Performance optimizations — FixedMetric, IdentityMetric with Fill arrays, selective copy, redundant cov bypass
@@ -152,6 +158,10 @@ Recent major work (phases A–G, 2026-07):
 - **CESS formula fix (2f5de82)**: Corrected CESS formula, adjusted tolerances, documented ULA edge cases
 - **Eigendecomposition Cholesky (e2de464)**: Compute Cholesky factorization from eigendecomposition in ensure_posdef
 - **ensure_posdef refactor (8feb28e)**: Now returns PDMat for downstream efficiency
+- **progress_fraction (d5aa673, ecda273)**: Added progress indicator to sequence interface, wired through estimate_metric for transparent progress tracking
+- **Phase 2A (24b99f0)**: Aggregate state types and batched init — `PopulationChainState{C,T}` and `PopulationKernelState{S}` for batch particle processing, with forwarding methods for ergonomics and batched initialization
+- **Phase 2B (b3ebebf)**: Refactored `smc()` and `waste_free_smc()` to use population kernels — both now normalize individual kernels to population form, treating the entire particle population as one Markov chain with aggregate state
+- **Phase 2C (95e4a10)**: Enhanced metric estimation — `EmpiricalFisher` now uses `ParticleCov` for more reliable covariance estimation in the first iteration
 
 Older work:
 - **Removed internal Base.result_types reliance** (f51a39c): No longer depends on undocumented Base internals
@@ -161,6 +171,7 @@ Older work:
 ### Key Patterns
 
 - **Dual-mode kernels**: All kernels support `Val{false}` (no gradients, cheaper) and `Val{true}` (with gradients, more efficient)
+- **Population kernels**: Individual kernels automatically normalize to population form for batch processing; internally aggregate all particles into one `PopulationChainState` and one `PopulationKernelState`, then transpose back to per-particle shape for adaptation logic
 - **Mixed-precision support**: Kernel states support both Float64 and Float32 fields for memory/performance trade-offs (Phase G.2)
 - **Lazy adaptation**: Kernel and metric adaptation happen post-hoc on acceptance/jump distance; no online preconditioning during kernel initialization
 - **MetaNumber tracking**: Log-densities wrapped to preserve information (e.g., unnormalized density before tempering) for later analysis

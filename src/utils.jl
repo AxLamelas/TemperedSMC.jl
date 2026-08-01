@@ -154,22 +154,14 @@ function ensure_posdef(M::Matrix{T}) where T <: Real
 		M = (M + M')/2
 	end
 
-	# Try Cholesky first (fast path for well-conditioned matrices)
-	try
-		chol = cholesky(Symmetric(M))
-		# If Cholesky succeeds, matrix is already PD
-		return PDMat(Symmetric(M),chol)
-	catch
-		# Fall back to eigenvalue approach for ill-conditioned matrices
-		F = eigen(Symmetric(M))
-		for i in eachindex(F.values)
-			F.values[i] = sqrt(clamp(F.values[i], ε, invε))
-		end
-		rmul!(F.vectors,Diagonal(F.values))
-		fact = lq!(F.vectors)
-
-		return PDMat(fact.L * fact.L',Cholesky(LowerTriangular(fact.L)))
+	F = eigen(Symmetric(M))
+	for i in eachindex(F.values)
+		F.values[i] = sqrt(clamp(F.values[i], ε, invε))
 	end
+	rmul!(F.vectors,Diagonal(F.values))
+	fact = lq!(F.vectors)
+
+	return PDMat(fact.L * fact.L',Cholesky(LowerTriangular(fact.L)))
 end
 
 # As ensure_posdef often involves a matrix decomposition the
@@ -181,26 +173,14 @@ function ensure_posdef_and_invert(M::Matrix{T}) where T <: Real
 		M = (M + M')/2
 	end
 
-	# Try Cholesky first (fast path) — compute inverse via triangular solves
-	try
-		chol = cholesky(Symmetric(M))
-		# M = L * L', so M^(-1) = (L')^(-1) * L^(-1)
-		# Use triangular solves: I / L' / L for efficiency (avoids full matrix inversion)
-		L = chol.L
-		# Compute (L * L')^(-1) = (L')^(-1) * L^(-1) efficiently
-		Linv = inv(UpperTriangular(chol.U))
-		return PDMat(Symmetric(Linv * Linv'),Cholesky(L))
-	catch
-		# Fall back to eigenvalue approach for ill-conditioned matrices
-		F = eigen(Symmetric(M))
-		for i in eachindex(F.values)
-			F.values[i] = sqrt(clamp(1/F.values[i], ε, invε))
-		end
-		rmul!(F.vectors,Diagonal(F.values))
-		fact = lq!(F.vectors)
-
-		return PDMat(fact.L * fact.L',Cholesky(LowerTriangular(fact.L)))
+	F = eigen(Symmetric(M))
+	for i in eachindex(F.values)
+		F.values[i] = sqrt(clamp(1/F.values[i], ε, invε))
 	end
+	rmul!(F.vectors,Diagonal(F.values))
+	fact = lq!(F.vectors)
+
+	return PDMat(fact.L * fact.L',Cholesky(LowerTriangular(fact.L)))
 end
 
 

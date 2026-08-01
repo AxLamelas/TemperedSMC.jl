@@ -75,11 +75,7 @@ end
 
 struct EmpiricalFisher <: AbstractMetric end
 
-function estimate_metric(c::EmpiricalFisher,samples,weights,states::AbstractVector{<:GradientChainState},xs,t)
-	# On the first iteration use ParticleCov because the gradient only considers the reference distribution
-	if iszero(t) 
-		return estimate_metric(ParticleCov(),samples,weights,states,xs,t)
-	end
+function estimate_metric(c::EmpiricalFisher,samples,weights,states::AbstractVector{<:GradientChainState},xs,_)
 	# TODO:  Make this more efficient
 	F = mean(states) do s
 		s.gradlogp * s.gradlogp'

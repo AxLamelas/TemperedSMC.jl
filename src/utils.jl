@@ -163,7 +163,7 @@ function ensure_posdef(M::Matrix{T}) where T <: Real
 	L = fact.L
 	for i in axes(L,1)
 		if L[i,i] < 0
-			@. L[i,1:i] = -L[i,1:i]
+			@. L[i:end,i] = -L[i:end,i]
 		end
 	end
 
@@ -188,7 +188,7 @@ function ensure_posdef_and_invert(M::Matrix{T}) where T <: Real
 	L = fact.L
 	for i in axes(L,1)
 		if L[i,i] < 0
-			@. L[i,1:i] = -L[i,1:i]
+			@. L[i:end,i] = -L[i:end,i]
 		end
 	end
 

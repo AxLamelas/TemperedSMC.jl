@@ -160,8 +160,14 @@ function ensure_posdef(M::Matrix{T}) where T <: Real
 	end
 	rmul!(F.vectors,Diagonal(F.values))
 	fact = lq!(F.vectors)
+	L = fact.L
+	for i in axes(L,1)
+		if L[i,i] < 0
+			@. L[i,1:i] = -L[i,1:i]
+		end
+	end
 
-	return PDMat(fact.L * fact.L',Cholesky(LowerTriangular(fact.L)))
+	return PDMat(L * L',Cholesky(LowerTriangular(L)))
 end
 
 # As ensure_posdef often involves a matrix decomposition the
@@ -179,8 +185,15 @@ function ensure_posdef_and_invert(M::Matrix{T}) where T <: Real
 	end
 	rmul!(F.vectors,Diagonal(F.values))
 	fact = lq!(F.vectors)
+	L = fact.L
+	for i in axes(L,1)
+		if L[i,i] < 0
+			@. L[i,1:i] = -L[i,1:i]
+		end
+	end
 
-	return PDMat(fact.L * fact.L',Cholesky(LowerTriangular(fact.L)))
+
+	return PDMat(L * L',Cholesky(LowerTriangular(L)))
 end
 
 

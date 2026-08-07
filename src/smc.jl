@@ -18,6 +18,7 @@ mutable struct SMCState{T,S<:AbstractSequenceState{T},C}
   t_metric::Float64     # Elapsed time for metric/covariance estimation
   t_mcmc::Float64       # Elapsed time for MCMC rejuvenation phase
   t_adapt::Float64      # Elapsed time for kernel parameter adaptation
+  t_total::Float64      # Cumulative elapsed time from the start of the run until now
   n_steps::Int          # Number of MCMC steps run this iteration
 end
 
@@ -38,14 +39,14 @@ function SMCState(seq::AbstractDistributionSequence,ref_logdensity,initial_sampl
 
   return SMCState(seq_state,deepcopy(initial_samples),W,lw,
                   states,zero(T),1.,zero(T),zero(T),false,
-                  0.,0.,0.,0.,0)
+                  0.,0.,0.,0.,0.,0)
 end
 
 _copy_state(state::SMCState) = SMCState(
   deepcopy(state.seq_state), copy(state.samples), copy(state.W),
   copy(state.lw), copy(state.states), state.log_evidence,
   state.acceptance_rate, state.trcov_reweight, state.trcov_mcmc, state.resampled,
-  state.t_reweight, state.t_metric, state.t_mcmc, state.t_adapt, state.n_steps)
+  state.t_reweight, state.t_metric, state.t_mcmc, state.t_adapt, state.t_total, state.n_steps)
 
 function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::AbstractMatrix;
 			 mcmc_kernel::AbstractMCMCKernel = RWMH(),
@@ -201,6 +202,8 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 
 		state.trcov_mcmc = tr(Σg)
 
+		state.t_total += state.t_reweight + state.t_metric + state.t_mcmc + state.t_adapt
+
 		# Average acceptance rate of the chains
 		state.acceptance_rate = sum(c.n_accepts for c in chains) / (n_steps*n_samples)
 
@@ -214,7 +217,7 @@ function smc(seq::AbstractDistributionSequence,ref_logdensity,initial_samples::A
 					  ("t_reweight",state.t_reweight),
 					  ("t_metric",state.t_metric),
 					  ("t_mcmc",state.t_mcmc),
-					  ("t_adapt",state.t_adapt)
+					  ("t_adapt",state.t_adapt),
 					  ])
 
 		if islast(seq,state.seq_state) break end
@@ -345,6 +348,8 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 			update_parameters!(ker_parameters,chains,Σg)
 		end
 
+		state.t_total += state.t_reweight + state.t_metric + state.t_mcmc + state.t_adapt
+
 		ProgressMeter.next!(loop_prog,
 					  showvalues=[
 					  progress_info(state.seq_state)...,
@@ -354,7 +359,7 @@ function waste_free_smc(seq::AbstractDistributionSequence,ref_logdensity,initial
 					  ("t_reweight",state.t_reweight),
 					  ("t_metric",state.t_metric),
 					  ("t_mcmc",state.t_mcmc),
-					  ("t_adapt",state.t_adapt)
+					  ("t_adapt",state.t_adapt),
 					  ])
 
 		if islast(seq,state.seq_state)
